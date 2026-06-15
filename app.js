@@ -18,6 +18,8 @@ const state = {
   depth: 0,
   layerCount: 1,
   inStation: false,
+  workoutReady: false,
+  readyReason: "기구 밖",
   exercise: "idle",
   direction: "top",
   baseline: null,
@@ -133,7 +135,18 @@ function handlePose(landmarks) {
   }
 
   const points = pickLandmarks(landmarks);
-  const visibility = Object.values(points).reduce((sum, point) => sum + point.visibility, 0) / 10;
+  const stationPoints = [
+    points.nose,
+    points.leftShoulder,
+    points.rightShoulder,
+    points.leftElbow,
+    points.rightElbow,
+    points.leftWrist,
+    points.rightWrist,
+    points.leftHip,
+    points.rightHip,
+  ];
+  const visibility = stationPoints.reduce((sum, point) => sum + point.visibility, 0) / stationPoints.length;
   const centerX = (points.leftShoulder.x + points.rightShoulder.x + points.leftHip.x + points.rightHip.x) / 4;
   const shoulderWidth = distance(points.leftShoulder, points.rightShoulder);
   const torsoHeight =
@@ -149,8 +162,21 @@ function handlePose(landmarks) {
     return;
   }
 
-  const detectedExercise = detectExercise(points);
-  state.exercise = state.mode === "auto" ? detectedExercise : state.mode;
+  const readiness = getWorkoutReadiness(points);
+  state.workoutReady = readiness.ready;
+  state.readyReason = readiness.reason;
+
+  if (!readiness.ready) {
+    state.exercise = "ready";
+    state.depth = Math.max(0, state.depth - 0.045);
+    state.layerCount = 1;
+    state.baseline = null;
+    state.peakDepth = 0;
+    state.direction = "top";
+    return;
+  }
+
+  state.exercise = readiness.exercise;
 
   const movementY = getMovementSignal(points, state.exercise);
   processRepSignal(movementY);
@@ -169,21 +195,71 @@ function pickLandmarks(landmarks) {
     rightHip: landmarks[24],
     leftKnee: landmarks[25],
     rightKnee: landmarks[26],
+    leftAnkle: landmarks[27],
+    rightAnkle: landmarks[28],
   };
 }
 
-function detectExercise(points) {
+function getWorkoutReadiness(points) {
   const wristY = (points.leftWrist.y + points.rightWrist.y) / 2;
+  const wristX = (points.leftWrist.x + points.rightWrist.x) / 2;
   const shoulderY = (points.leftShoulder.y + points.rightShoulder.y) / 2;
+  const shoulderX = (points.leftShoulder.x + points.rightShoulder.x) / 2;
   const hipY = (points.leftHip.y + points.rightHip.y) / 2;
+  const hipX = (points.leftHip.x + points.rightHip.x) / 2;
+  const ankleY = (points.leftAnkle.y + points.rightAnkle.y) / 2;
+  const shoulderWidth = distance(points.leftShoulder, points.rightShoulder);
+  const wristWidth = distance(points.leftWrist, points.rightWrist);
+  const lowerBodyVisible =
+    points.leftKnee.visibility > 0.42 &&
+    points.rightKnee.visibility > 0.42 &&
+    points.leftAnkle.visibility > 0.42 &&
+    points.rightAnkle.visibility > 0.42;
+  const fullBodyVisible = lowerBodyVisible && ankleY - points.nose.y > 0.42;
+  const feetOffGround = fullBodyVisible && ankleY < 0.93;
   const elbowAngle =
     (angle(points.leftShoulder, points.leftElbow, points.leftWrist) +
       angle(points.rightShoulder, points.rightElbow, points.rightWrist)) /
     2;
+  const handsOverBarLike =
+    wristY < shoulderY - 0.13 &&
+    wristWidth > shoulderWidth * 0.75 &&
+    Math.abs(wristX - shoulderX) < shoulderWidth * 0.75;
+  const dipSupportLike =
+    wristY > shoulderY - 0.03 &&
+    wristY < hipY + 0.13 &&
+    Math.abs(wristX - hipX) < shoulderWidth * 0.95 &&
+    elbowAngle < 158;
 
-  if (wristY < shoulderY - 0.12) return "pullup";
-  if (elbowAngle < 135 && wristY > shoulderY - 0.04 && wristY < hipY + 0.08) return "dip";
-  return state.exercise === "idle" ? "pullup" : state.exercise;
+  if (!lowerBodyVisible) {
+    return { ready: false, exercise: "idle", reason: "다리까지 보여야 함" };
+  }
+
+  if (!feetOffGround) {
+    return { ready: false, exercise: "idle", reason: "발이 떠야 함" };
+  }
+
+  if (state.mode === "pullup") {
+    return handsOverBarLike
+      ? { ready: true, exercise: "pullup", reason: "턱걸이 준비" }
+      : { ready: false, exercise: "idle", reason: "바를 잡아야 함" };
+  }
+
+  if (state.mode === "dip") {
+    return dipSupportLike
+      ? { ready: true, exercise: "dip", reason: "딥스 준비" }
+      : { ready: false, exercise: "idle", reason: "손이 바 옆에 있어야 함" };
+  }
+
+  if (handsOverBarLike) {
+    return { ready: true, exercise: "pullup", reason: "턱걸이 준비" };
+  }
+
+  if (dipSupportLike) {
+    return { ready: true, exercise: "dip", reason: "딥스 준비" };
+  }
+
+  return { ready: false, exercise: "idle", reason: "바 잡기 대기" };
 }
 
 function getMovementSignal(points, exercise) {
@@ -246,26 +322,20 @@ function handleFallbackMotion() {
 
   state.fallbackPrevious = frame;
   state.fallbackMotion = state.fallbackMotion * 0.86 + (diff / 70000) * 0.14;
-  state.inStation = state.fallbackMotion > 0.02;
-  state.exercise = state.mode === "auto" ? "motion" : state.mode;
+  state.inStation = false;
+  state.workoutReady = false;
+  state.readyReason = "포즈 모델 필요";
+  state.exercise = "idle";
   state.depth = clamp(state.fallbackMotion * 2.8, 0, 1);
-  state.layerCount = 1 + Number(state.depth > 0.18) + Number(state.depth > 0.48) + Number(state.depth > 0.76);
-
-  if (state.depth > 0.7 && state.direction === "top") {
-    state.direction = "bottom";
-  }
-
-  if (state.depth < 0.25 && state.direction === "bottom") {
-    state.reps += 1;
-    triggerRepAccent(state.depth);
-    state.direction = "top";
-  }
+  state.layerCount = 1;
 
   drawFallbackField();
 }
 
 function markResting() {
   state.inStation = false;
+  state.workoutReady = false;
+  state.readyReason = "기구 밖";
   state.exercise = "idle";
   state.depth = Math.max(0, state.depth - 0.035);
   state.layerCount = 1;
@@ -287,6 +357,8 @@ function drawSkeleton(points, active) {
     ["leftHip", "rightHip"],
     ["leftHip", "leftKnee"],
     ["rightHip", "rightKnee"],
+    ["leftKnee", "leftAnkle"],
+    ["rightKnee", "rightAnkle"],
   ];
 
   ctx.lineWidth = 4;
@@ -341,13 +413,18 @@ function triggerRepAccent(depth) {
 }
 
 function updateUI() {
-  presenceStatus.textContent = state.inStation ? "입장 감지" : "숲 대기";
+  presenceStatus.textContent = state.workoutReady
+    ? "운동 인식"
+    : state.inStation
+      ? "준비 대기"
+      : "숲 대기";
   repCountEl.textContent = String(state.reps);
   depthScoreEl.textContent = `${Math.round(state.depth * 100)}%`;
   layerCountEl.textContent = String(state.layerCount);
 
   const labels = {
     idle: "산 사운드",
+    ready: state.readyReason,
     pullup: "턱걸이",
     dip: "딥스",
     motion: "움직임",
