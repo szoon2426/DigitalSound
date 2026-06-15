@@ -208,7 +208,7 @@ canvas {
 
 .actions {
   display: grid;
-  grid-template-columns: 1fr 1fr 50px;
+  grid-template-columns: 1fr 1fr 1fr 50px;
   gap: 10px;
 }
 
@@ -228,6 +228,25 @@ canvas {
   background: rgba(114, 199, 220, 0.12);
   color: var(--text);
   font-weight: 750;
+}
+
+.depth-control {
+  padding: 13px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  display: grid;
+  gap: 10px;
+}
+
+.depth-control span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.depth-control input {
+  width: 100%;
+  accent-color: var(--gold);
 }
 
 .icon-button {
@@ -295,7 +314,7 @@ canvas {
   }
 
   .actions {
-    grid-template-columns: 1fr 1fr 50px;
+    grid-template-columns: 1fr 1fr 1fr 50px;
   }
 }
 

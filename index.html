@@ -51,6 +51,9 @@
             <button id="soundOnlyButton" class="secondary-button" type="button">
               산 배경음만 테스트
             </button>
+            <button id="addRepButton" class="secondary-button" type="button">
+              1회 추가
+            </button>
             <button id="startButton" class="primary-button" type="button">
               카메라와 사운드 시작
             </button>
@@ -59,22 +62,35 @@
             </button>
           </div>
 
+          <label class="depth-control" for="depthSlider">
+            <span>도파민 깊이</span>
+            <input id="depthSlider" type="range" min="0" max="100" value="65" />
+          </label>
+
           <div class="sound-stack" aria-label="현재 활성 사운드 레이어">
             <div class="sound-row active" data-layer="forest">
               <span></span>
               숲 앰비언스
             </div>
-            <div class="sound-row" data-layer="wind">
+            <div class="sound-row" data-layer="bass">
               <span></span>
-              상승 바람
+              저현 드론
             </div>
-            <div class="sound-row" data-layer="water">
+            <div class="sound-row" data-layer="strings">
               <span></span>
-              계곡 리듬
+              스트링 패드
             </div>
-            <div class="sound-row" data-layer="chime">
+            <div class="sound-row" data-layer="brass">
               <span></span>
-              정상 차임
+              브라스 상승
+            </div>
+            <div class="sound-row" data-layer="choir">
+              <span></span>
+              오페라 합창
+            </div>
+            <div class="sound-row" data-layer="timpani">
+              <span></span>
+              팀파니 심장박
             </div>
           </div>
         </aside>
