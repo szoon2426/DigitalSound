@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>산스장</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="stage" aria-label="산스장 카메라 모션 인식">
+        <div class="camera-wrap">
+          <video id="camera" playsinline muted></video>
+          <canvas id="overlay"></canvas>
+          <div class="scan-line" aria-hidden="true"></div>
+          <div class="status-pill" id="presenceStatus">대기 중</div>
+        </div>
+
+        <aside class="control-panel" aria-label="운동 및 사운드 상태">
+          <div class="brand">
+            <p>Sound Gym in the Mountain</p>
+            <h1>산스장</h1>
+          </div>
+
+          <div class="meters">
+            <div class="metric">
+              <span>운동 상태</span>
+              <strong id="phaseText">카메라 준비</strong>
+            </div>
+            <div class="metric">
+              <span>반복 횟수</span>
+              <strong id="repCount">0</strong>
+            </div>
+            <div class="metric">
+              <span>깊이</span>
+              <strong id="depthScore">0%</strong>
+            </div>
+            <div class="metric">
+              <span>사운드 레이어</span>
+              <strong id="layerCount">1</strong>
+            </div>
+          </div>
+
+          <div class="mode-row" role="group" aria-label="운동 모드">
+            <button class="mode-button active" data-mode="auto" type="button">자동</button>
+            <button class="mode-button" data-mode="pullup" type="button">턱걸이</button>
+            <button class="mode-button" data-mode="dip" type="button">딥스</button>
+          </div>
+
+          <div class="actions">
+            <button id="startButton" class="primary-button" type="button">
+              카메라와 사운드 시작
+            </button>
+            <button id="resetButton" class="icon-button" type="button" title="기록 초기화">
+              ↺
+            </button>
+          </div>
+
+          <div class="sound-stack" aria-label="현재 활성 사운드 레이어">
+            <div class="sound-row active" data-layer="forest">
+              <span></span>
+              숲 앰비언스
+            </div>
+            <div class="sound-row" data-layer="wind">
+              <span></span>
+              상승 바람
+            </div>
+            <div class="sound-row" data-layer="water">
+              <span></span>
+              계곡 리듬
+            </div>
+            <div class="sound-row" data-layer="chime">
+              <span></span>
+              정상 차임
+            </div>
+          </div>
+        </aside>
+      </section>
+    </main>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

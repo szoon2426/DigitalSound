@@ -1,0 +1,514 @@
+const video = document.querySelector("#camera");
+const overlay = document.querySelector("#overlay");
+const ctx = overlay.getContext("2d");
+
+const startButton = document.querySelector("#startButton");
+const resetButton = document.querySelector("#resetButton");
+const modeButtons = document.querySelectorAll(".mode-button");
+const presenceStatus = document.querySelector("#presenceStatus");
+const phaseText = document.querySelector("#phaseText");
+const repCountEl = document.querySelector("#repCount");
+const depthScoreEl = document.querySelector("#depthScore");
+const layerCountEl = document.querySelector("#layerCount");
+const soundRows = document.querySelectorAll(".sound-row");
+
+const state = {
+  mode: "auto",
+  reps: 0,
+  depth: 0,
+  layerCount: 1,
+  inStation: false,
+  exercise: "idle",
+  direction: "top",
+  baseline: null,
+  peakDepth: 0,
+  poseReady: false,
+  fallbackPrevious: null,
+  fallbackMotion: 0,
+  lastChimeAt: 0,
+};
+
+let poseLandmarker = null;
+let lastVideoTime = -1;
+let audio = null;
+let animationFrame = null;
+
+const POSE_CDN =
+  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+const WASM_CDN =
+  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
+
+startButton.addEventListener("click", startExperience);
+resetButton.addEventListener("click", resetSession);
+
+modeButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    state.mode = button.dataset.mode;
+    state.baseline = null;
+    modeButtons.forEach((item) => item.classList.toggle("active", item === button));
+  });
+});
+
+async function startExperience() {
+  startButton.disabled = true;
+  startButton.textContent = "시작 중";
+  phaseText.textContent = "권한 요청";
+
+  try {
+    await startCamera();
+    audio = createMountainAudio();
+    await audio.start();
+    await setupPose();
+    resizeCanvas();
+    startButton.textContent = "실행 중";
+    phaseText.textContent = "기구 감지";
+    animationFrame = requestAnimationFrame(loop);
+  } catch (error) {
+    console.error(error);
+    startButton.disabled = false;
+    startButton.textContent = "다시 시작";
+    phaseText.textContent = "권한 확인";
+    presenceStatus.textContent = "오류";
+  }
+}
+
+async function startCamera() {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: {
+      facingMode: "user",
+      width: { ideal: 1280 },
+      height: { ideal: 720 },
+    },
+    audio: false,
+  });
+
+  video.srcObject = stream;
+  await video.play();
+}
+
+async function setupPose() {
+  try {
+    const vision = await import(POSE_CDN);
+    const resolver = await vision.FilesetResolver.forVisionTasks(WASM_CDN);
+    poseLandmarker = await vision.PoseLandmarker.createFromOptions(resolver, {
+      baseOptions: {
+        modelAssetPath:
+          "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task",
+        delegate: "GPU",
+      },
+      runningMode: "VIDEO",
+      numPoses: 1,
+      minPoseDetectionConfidence: 0.45,
+      minPosePresenceConfidence: 0.45,
+      minTrackingConfidence: 0.45,
+    });
+    state.poseReady = true;
+  } catch (error) {
+    console.warn("Pose model failed, using motion fallback.", error);
+    state.poseReady = false;
+  }
+}
+
+function loop() {
+  resizeCanvas();
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+  if (state.poseReady && video.currentTime !== lastVideoTime) {
+    lastVideoTime = video.currentTime;
+    const result = poseLandmarker.detectForVideo(video, performance.now());
+    handlePose(result.landmarks?.[0] || null);
+  } else if (!state.poseReady) {
+    handleFallbackMotion();
+  }
+
+  updateSound();
+  updateUI();
+  animationFrame = requestAnimationFrame(loop);
+}
+
+function handlePose(landmarks) {
+  if (!landmarks) {
+    markResting();
+    return;
+  }
+
+  const points = pickLandmarks(landmarks);
+  const visibility = Object.values(points).reduce((sum, point) => sum + point.visibility, 0) / 10;
+  const centerX = (points.leftShoulder.x + points.rightShoulder.x + points.leftHip.x + points.rightHip.x) / 4;
+  const shoulderWidth = distance(points.leftShoulder, points.rightShoulder);
+  const torsoHeight =
+    (distance(points.leftShoulder, points.leftHip) + distance(points.rightShoulder, points.rightHip)) / 2;
+  const stationConfidence = visibility > 0.48 && shoulderWidth > 0.08 && torsoHeight > 0.14;
+
+  state.inStation = stationConfidence && centerX > 0.18 && centerX < 0.82;
+
+  drawSkeleton(points, state.inStation);
+
+  if (!state.inStation) {
+    markResting();
+    return;
+  }
+
+  const detectedExercise = detectExercise(points);
+  state.exercise = state.mode === "auto" ? detectedExercise : state.mode;
+
+  const movementY = getMovementSignal(points, state.exercise);
+  processRepSignal(movementY);
+}
+
+function pickLandmarks(landmarks) {
+  return {
+    nose: landmarks[0],
+    leftShoulder: landmarks[11],
+    rightShoulder: landmarks[12],
+    leftElbow: landmarks[13],
+    rightElbow: landmarks[14],
+    leftWrist: landmarks[15],
+    rightWrist: landmarks[16],
+    leftHip: landmarks[23],
+    rightHip: landmarks[24],
+    leftKnee: landmarks[25],
+    rightKnee: landmarks[26],
+  };
+}
+
+function detectExercise(points) {
+  const wristY = (points.leftWrist.y + points.rightWrist.y) / 2;
+  const shoulderY = (points.leftShoulder.y + points.rightShoulder.y) / 2;
+  const hipY = (points.leftHip.y + points.rightHip.y) / 2;
+  const elbowAngle =
+    (angle(points.leftShoulder, points.leftElbow, points.leftWrist) +
+      angle(points.rightShoulder, points.rightElbow, points.rightWrist)) /
+    2;
+
+  if (wristY < shoulderY - 0.12) return "pullup";
+  if (elbowAngle < 135 && wristY > shoulderY - 0.04 && wristY < hipY + 0.08) return "dip";
+  return state.exercise === "idle" ? "pullup" : state.exercise;
+}
+
+function getMovementSignal(points, exercise) {
+  if (exercise === "dip") {
+    return (points.leftShoulder.y + points.rightShoulder.y) / 2;
+  }
+  return points.nose.y;
+}
+
+function processRepSignal(signalY) {
+  if (state.baseline === null) {
+    state.baseline = signalY;
+    return;
+  }
+
+  state.baseline = state.baseline * 0.985 + signalY * 0.015;
+
+  const rawDepth =
+    state.exercise === "dip"
+      ? Math.max(0, signalY - state.baseline)
+      : Math.max(0, state.baseline - signalY);
+
+  state.depth = clamp(rawDepth / 0.18, 0, 1);
+  state.peakDepth = Math.max(state.peakDepth, state.depth);
+
+  if (state.direction === "top" && state.depth > 0.58) {
+    state.direction = "bottom";
+  }
+
+  if (state.direction === "bottom" && state.depth < 0.24) {
+    if (state.peakDepth > 0.58) {
+      state.reps += 1;
+      triggerRepAccent(state.peakDepth);
+    }
+    state.peakDepth = 0;
+    state.direction = "top";
+  }
+
+  state.layerCount = 1 + Number(state.depth > 0.18) + Number(state.depth > 0.48) + Number(state.depth > 0.76);
+}
+
+function handleFallbackMotion() {
+  const sampleSize = 80;
+  const temp = document.createElement("canvas");
+  temp.width = sampleSize;
+  temp.height = sampleSize;
+  const tempCtx = temp.getContext("2d");
+  tempCtx.drawImage(video, 0, 0, sampleSize, sampleSize);
+  const frame = tempCtx.getImageData(0, 0, sampleSize, sampleSize).data;
+
+  if (!state.fallbackPrevious) {
+    state.fallbackPrevious = frame;
+    return;
+  }
+
+  let diff = 0;
+  for (let index = 0; index < frame.length; index += 16) {
+    diff += Math.abs(frame[index] - state.fallbackPrevious[index]);
+  }
+
+  state.fallbackPrevious = frame;
+  state.fallbackMotion = state.fallbackMotion * 0.86 + (diff / 70000) * 0.14;
+  state.inStation = state.fallbackMotion > 0.02;
+  state.exercise = state.mode === "auto" ? "motion" : state.mode;
+  state.depth = clamp(state.fallbackMotion * 2.8, 0, 1);
+  state.layerCount = 1 + Number(state.depth > 0.18) + Number(state.depth > 0.48) + Number(state.depth > 0.76);
+
+  if (state.depth > 0.7 && state.direction === "top") {
+    state.direction = "bottom";
+  }
+
+  if (state.depth < 0.25 && state.direction === "bottom") {
+    state.reps += 1;
+    triggerRepAccent(state.depth);
+    state.direction = "top";
+  }
+
+  drawFallbackField();
+}
+
+function markResting() {
+  state.inStation = false;
+  state.exercise = "idle";
+  state.depth = Math.max(0, state.depth - 0.035);
+  state.layerCount = 1;
+  state.baseline = null;
+  state.peakDepth = 0;
+  state.direction = "top";
+}
+
+function drawSkeleton(points, active) {
+  const color = active ? "#74d48a" : "#ee716a";
+  const pairs = [
+    ["leftShoulder", "rightShoulder"],
+    ["leftShoulder", "leftElbow"],
+    ["leftElbow", "leftWrist"],
+    ["rightShoulder", "rightElbow"],
+    ["rightElbow", "rightWrist"],
+    ["leftShoulder", "leftHip"],
+    ["rightShoulder", "rightHip"],
+    ["leftHip", "rightHip"],
+    ["leftHip", "leftKnee"],
+    ["rightHip", "rightKnee"],
+  ];
+
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+
+  pairs.forEach(([from, to]) => {
+    drawLine(points[from], points[to]);
+  });
+
+  Object.values(points).forEach((point) => {
+    const x = point.x * overlay.width;
+    const y = point.y * overlay.height;
+    ctx.beginPath();
+    ctx.arc(x, y, 4, 0, Math.PI * 2);
+    ctx.fill();
+  });
+}
+
+function drawLine(from, to) {
+  ctx.beginPath();
+  ctx.moveTo(from.x * overlay.width, from.y * overlay.height);
+  ctx.lineTo(to.x * overlay.width, to.y * overlay.height);
+  ctx.stroke();
+}
+
+function drawFallbackField() {
+  const bars = 18;
+  ctx.strokeStyle = "rgba(116, 212, 138, 0.64)";
+  ctx.lineWidth = 2;
+  for (let index = 0; index < bars; index += 1) {
+    const x = (overlay.width / bars) * index;
+    const height = overlay.height * (0.12 + state.depth * Math.sin(index * 1.7) * 0.16 + state.depth * 0.34);
+    ctx.beginPath();
+    ctx.moveTo(x, overlay.height);
+    ctx.lineTo(x, overlay.height - height);
+    ctx.stroke();
+  }
+}
+
+function updateSound() {
+  if (!audio) return;
+  audio.setPresence(state.inStation);
+  audio.setDepth(state.depth);
+  audio.setLayers(state.layerCount);
+}
+
+function triggerRepAccent(depth) {
+  if (!audio || performance.now() - state.lastChimeAt < 600) return;
+  state.lastChimeAt = performance.now();
+  audio.chime(depth);
+}
+
+function updateUI() {
+  presenceStatus.textContent = state.inStation ? "입장 감지" : "숲 대기";
+  repCountEl.textContent = String(state.reps);
+  depthScoreEl.textContent = `${Math.round(state.depth * 100)}%`;
+  layerCountEl.textContent = String(state.layerCount);
+
+  const labels = {
+    idle: "산 사운드",
+    pullup: "턱걸이",
+    dip: "딥스",
+    motion: "움직임",
+  };
+  phaseText.textContent = labels[state.exercise] || "운동 중";
+
+  soundRows.forEach((row, index) => {
+    row.classList.toggle("active", index < state.layerCount);
+  });
+}
+
+function resetSession() {
+  state.reps = 0;
+  state.depth = 0;
+  state.layerCount = 1;
+  state.baseline = null;
+  state.peakDepth = 0;
+  state.direction = "top";
+  updateUI();
+}
+
+function resizeCanvas() {
+  const rect = overlay.getBoundingClientRect();
+  const width = Math.round(rect.width * window.devicePixelRatio);
+  const height = Math.round(rect.height * window.devicePixelRatio);
+  if (overlay.width !== width || overlay.height !== height) {
+    overlay.width = width;
+    overlay.height = height;
+  }
+}
+
+function createMountainAudio() {
+  const context = new AudioContext();
+  const master = context.createGain();
+  const forestGain = context.createGain();
+  const windGain = context.createGain();
+  const waterGain = context.createGain();
+  const pulseGain = context.createGain();
+
+  master.gain.value = 0.72;
+  forestGain.gain.value = 0.18;
+  windGain.gain.value = 0;
+  waterGain.gain.value = 0;
+  pulseGain.gain.value = 0;
+
+  forestGain.connect(master);
+  windGain.connect(master);
+  waterGain.connect(master);
+  pulseGain.connect(master);
+  master.connect(context.destination);
+
+  const forest = noiseSource(context, 2);
+  const forestFilter = context.createBiquadFilter();
+  forestFilter.type = "bandpass";
+  forestFilter.frequency.value = 620;
+  forestFilter.Q.value = 0.7;
+  forest.connect(forestFilter).connect(forestGain);
+
+  const wind = noiseSource(context, 2);
+  const windFilter = context.createBiquadFilter();
+  windFilter.type = "lowpass";
+  windFilter.frequency.value = 420;
+  wind.connect(windFilter).connect(windGain);
+
+  const water = noiseSource(context, 1);
+  const waterFilter = context.createBiquadFilter();
+  waterFilter.type = "highpass";
+  waterFilter.frequency.value = 1200;
+  water.connect(waterFilter).connect(waterGain);
+
+  const pulse = context.createOscillator();
+  pulse.type = "sine";
+  pulse.frequency.value = 92;
+  pulse.connect(pulseGain);
+
+  const lfo = context.createOscillator();
+  const lfoGain = context.createGain();
+  lfo.frequency.value = 0.08;
+  lfoGain.gain.value = 170;
+  lfo.connect(lfoGain).connect(windFilter.frequency);
+
+  forest.start();
+  wind.start();
+  water.start();
+  pulse.start();
+  lfo.start();
+
+  return {
+    async start() {
+      if (context.state !== "running") await context.resume();
+    },
+    setPresence(active) {
+      ramp(context, forestGain.gain, active ? 0.22 : 0.15, 0.8);
+      ramp(context, master.gain, active ? 0.78 : 0.52, 0.8);
+    },
+    setDepth(depth) {
+      ramp(context, windGain.gain, depth * 0.23, 0.18);
+      ramp(context, waterGain.gain, Math.max(0, depth - 0.22) * 0.28, 0.18);
+      ramp(context, pulseGain.gain, Math.max(0, depth - 0.5) * 0.18, 0.12);
+      ramp(context, pulse.frequency, 90 + depth * 78, 0.12);
+    },
+    setLayers(layerCount) {
+      const lift = (layerCount - 1) / 3;
+      ramp(context, windFilter.frequency, 360 + lift * 900, 0.3);
+      ramp(context, waterFilter.frequency, 1300 - lift * 520, 0.3);
+    },
+    chime(depth) {
+      [523.25, 659.25, 783.99 + depth * 130].forEach((frequency, index) => {
+        const osc = context.createOscillator();
+        const gain = context.createGain();
+        osc.type = "triangle";
+        osc.frequency.value = frequency;
+        gain.gain.setValueAtTime(0, context.currentTime);
+        gain.gain.linearRampToValueAtTime(0.12, context.currentTime + 0.02 + index * 0.03);
+        gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.75 + index * 0.08);
+        osc.connect(gain).connect(master);
+        osc.start(context.currentTime + index * 0.03);
+        osc.stop(context.currentTime + 1.1 + index * 0.08);
+      });
+    },
+  };
+}
+
+function noiseSource(context, seconds) {
+  const bufferSize = context.sampleRate * seconds;
+  const buffer = context.createBuffer(1, bufferSize, context.sampleRate);
+  const data = buffer.getChannelData(0);
+
+  for (let index = 0; index < bufferSize; index += 1) {
+    data[index] = Math.random() * 2 - 1;
+  }
+
+  const source = context.createBufferSource();
+  source.buffer = buffer;
+  source.loop = true;
+  return source;
+}
+
+function ramp(context, param, value, seconds) {
+  param.cancelScheduledValues(context.currentTime);
+  param.linearRampToValueAtTime(value, context.currentTime + seconds);
+}
+
+function distance(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function angle(a, b, c) {
+  const ab = { x: a.x - b.x, y: a.y - b.y };
+  const cb = { x: c.x - b.x, y: c.y - b.y };
+  const dot = ab.x * cb.x + ab.y * cb.y;
+  const cross = ab.x * cb.y - ab.y * cb.x;
+  return Math.abs((Math.atan2(cross, dot) * 180) / Math.PI);
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+window.addEventListener("beforeunload", () => {
+  if (animationFrame) cancelAnimationFrame(animationFrame);
+  const stream = video.srcObject;
+  if (stream) stream.getTracks().forEach((track) => track.stop());
+});
