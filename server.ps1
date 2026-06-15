@@ -13,6 +13,7 @@ $types = @{
   ".jpg" = "image/jpeg"
   ".jpeg" = "image/jpeg"
   ".svg" = "image/svg+xml"
+  ".wav" = "audio/wav"
 }
 
 $listener = [System.Net.HttpListener]::new()

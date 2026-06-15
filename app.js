@@ -23,6 +23,7 @@ const state = {
   depth: 0.65,
   targetReps: 8,
   layerCount: 1,
+  phase: "idle",
   inStation: false,
   workoutReady: false,
   readyReason: "기구 밖",
@@ -189,7 +190,7 @@ function loop() {
 
 function handlePose(landmarks) {
   if (!landmarks) {
-    markResting();
+    finishInteraction();
     return;
   }
 
@@ -217,7 +218,7 @@ function handlePose(landmarks) {
   drawSkeleton(points, state.inStation);
 
   if (!state.inStation) {
-    markResting();
+    finishInteraction();
     return;
   }
 
@@ -226,6 +227,10 @@ function handlePose(landmarks) {
   state.readyReason = readiness.reason;
 
   if (!readiness.ready) {
+    if (readiness.ended) {
+      finishInteraction();
+      return;
+    }
     state.exercise = "ready";
     state.depth = Math.max(0, state.depth - 0.045);
     state.layerCount = 1;
@@ -233,6 +238,10 @@ function handlePose(landmarks) {
     state.peakDepth = 0;
     state.direction = "top";
     return;
+  }
+
+  if (state.phase === "idle") {
+    startInteractionSession();
   }
 
   state.exercise = readiness.exercise;
@@ -291,23 +300,19 @@ function getWorkoutReadiness(points) {
     elbowAngle < 158;
 
   if (!lowerBodyVisible) {
-    return { ready: false, exercise: "idle", reason: "다리까지 보여야 함" };
+    return { ready: false, exercise: "idle", reason: "다리까지 보여야 함", ended: false };
   }
 
   if (!feetOffGround) {
-    return { ready: false, exercise: "idle", reason: "발이 떠야 함" };
+    return { ready: false, exercise: "idle", reason: "발이 땅에 닿음", ended: true };
   }
 
   if (state.mode === "pullup") {
-    return handsOverBarLike
-      ? { ready: true, exercise: "pullup", reason: "턱걸이 준비" }
-      : { ready: false, exercise: "idle", reason: "바를 잡아야 함" };
+    return { ready: true, exercise: "pullup", reason: handsOverBarLike ? "턱걸이 준비" : "공중 대기" };
   }
 
   if (state.mode === "dip") {
-    return dipSupportLike
-      ? { ready: true, exercise: "dip", reason: "딥스 준비" }
-      : { ready: false, exercise: "idle", reason: "손이 바 옆에 있어야 함" };
+    return { ready: true, exercise: "dip", reason: dipSupportLike ? "딥스 준비" : "공중 대기" };
   }
 
   if (handsOverBarLike) {
@@ -318,7 +323,7 @@ function getWorkoutReadiness(points) {
     return { ready: true, exercise: "dip", reason: "딥스 준비" };
   }
 
-  return { ready: false, exercise: "idle", reason: "바 잡기 대기" };
+  return { ready: true, exercise: state.exercise === "dip" ? "dip" : "pullup", reason: "공중 대기" };
 }
 
 function getMovementSignal(points, exercise) {
@@ -344,6 +349,10 @@ function processRepSignal(signalY) {
   state.depth = clamp(rawDepth / 0.18, 0, 1);
   state.peakDepth = Math.max(state.peakDepth, state.depth);
 
+  if (state.phase === "ready" && state.depth > 0.25) {
+    state.phase = "exercising";
+  }
+
   if (state.direction === "top" && state.depth > 0.58) {
     state.direction = "bottom";
   }
@@ -357,7 +366,9 @@ function processRepSignal(signalY) {
     state.direction = "top";
   }
 
-  syncDopamineToGoal();
+  if (state.phase === "exercising" && state.reps === 0) {
+    state.layerCount = 1;
+  }
 }
 
 function handleFallbackMotion() {
@@ -396,7 +407,39 @@ function markResting() {
   state.workoutReady = false;
   state.readyReason = "기구 밖";
   state.exercise = "idle";
-  state.depth = Math.max(0, state.depth - 0.035);
+  state.depth = Number(depthSlider.value) / 100;
+  state.layerCount = 1;
+  state.baseline = null;
+  state.peakDepth = 0;
+  state.direction = "top";
+}
+
+function startInteractionSession() {
+  resetWorkoutProgress();
+  state.phase = "ready";
+  state.workoutReady = true;
+  state.readyReason = "공중 대기";
+  if (audio) {
+    audio.keepMountainBed();
+  }
+}
+
+function finishInteraction() {
+  if (state.phase !== "idle" || state.reps > 0 || state.layerCount > 1) {
+    resetWorkoutProgress();
+    if (audio) {
+      audio.fadeOutDopamine();
+      audio.keepMountainBed();
+    }
+  }
+
+  markResting();
+  state.phase = "idle";
+}
+
+function resetWorkoutProgress() {
+  state.reps = 0;
+  state.depth = Number(depthSlider.value) / 100;
   state.layerCount = 1;
   state.baseline = null;
   state.peakDepth = 0;
@@ -503,11 +546,12 @@ function getDopamineIntensity() {
 }
 
 function updateUI() {
-  presenceStatus.textContent = state.workoutReady
-    ? "운동 인식"
-    : state.inStation
-      ? "준비 대기"
-      : "숲 대기";
+  presenceStatus.textContent =
+    state.phase === "exercising"
+      ? "운동 중"
+      : state.phase === "ready"
+        ? "준비 완료"
+        : "숲 대기";
   repCountEl.textContent = String(state.reps);
   depthScoreEl.textContent = `${Math.round(state.depth * 100)}%`;
   layerCountEl.textContent = String(state.layerCount);
@@ -520,7 +564,12 @@ function updateUI() {
     dip: "딥스",
     motion: "움직임",
   };
-  phaseText.textContent = labels[state.exercise] || "운동 중";
+  phaseText.textContent =
+    state.phase === "ready"
+      ? "인터랙션 준비"
+      : state.phase === "exercising"
+        ? labels[state.exercise] || "운동 중"
+        : labels[state.exercise] || "산 사운드";
 
   soundRows.forEach((row, index) => {
     row.classList.toggle("active", index < state.layerCount);
@@ -528,15 +577,11 @@ function updateUI() {
 }
 
 function resetSession() {
-  state.reps = 0;
-  state.depth = Number(depthSlider.value) / 100;
   state.targetReps = clamp(Math.round(Number(targetRepsInput.value) || 8), 1, 30);
-  state.layerCount = 1;
-  state.baseline = null;
-  state.peakDepth = 0;
-  state.direction = "top";
+  resetWorkoutProgress();
+  state.phase = "idle";
   if (audio) {
-    audio.resetDopamine();
+    audio.fadeOutDopamine();
     audio.keepMountainBed();
   }
   updateUI();
@@ -567,7 +612,7 @@ function createMountainAudio() {
   dopamineBus.gain.value = 3.1;
   hallBus.gain.value = 0.32;
   hall.buffer = createHallImpulse(context, 2.8);
-  forestGain.gain.value = 0.24;
+  forestGain.gain.value = 0;
   windGain.gain.value = 0;
   waterGain.gain.value = 0;
   pulseGain.gain.value = 0;
@@ -580,12 +625,8 @@ function createMountainAudio() {
   dopamineBus.connect(hall).connect(hallBus).connect(master);
   master.connect(context.destination);
 
-  const forest = noiseSource(context, 2);
-  const forestFilter = context.createBiquadFilter();
-  forestFilter.type = "bandpass";
-  forestFilter.frequency.value = 620;
-  forestFilter.Q.value = 0.7;
-  forest.connect(forestFilter).connect(forestGain);
+  let forestSource = null;
+  let forestBufferPromise = null;
 
   const wind = noiseSource(context, 2);
   const windFilter = context.createBiquadFilter();
@@ -610,7 +651,6 @@ function createMountainAudio() {
   lfoGain.gain.value = 170;
   lfo.connect(lfoGain).connect(windFilter.frequency);
 
-  forest.start();
   wind.start();
   water.start();
   pulse.start();
@@ -628,10 +668,11 @@ function createMountainAudio() {
   return {
     async start() {
       if (context.state !== "running") await context.resume();
+      await startForestLoop();
     },
     keepMountainBed() {
       ramp(context, master.gain, 0.58, 1.2);
-      ramp(context, forestGain.gain, 0.24, 1.2);
+      ramp(context, forestGain.gain, 0.45, 1.2);
       ramp(context, windGain.gain, 0, 1.2);
       ramp(context, waterGain.gain, 0, 1.2);
       ramp(context, pulseGain.gain, 0, 1.2);
@@ -668,6 +709,12 @@ function createMountainAudio() {
         layer.stop();
       });
     },
+    fadeOutDopamine() {
+      dopamineLayers.splice(0).forEach((layer) => {
+        ramp(context, layer.gain.gain, 0, 1.8);
+        window.setTimeout(() => layer.stop(), 1900);
+      });
+    },
     setPresence(active) {
       void active;
     },
@@ -692,6 +739,42 @@ function createMountainAudio() {
       });
     },
   };
+
+  async function startForestLoop() {
+    if (forestSource) return;
+
+    try {
+      if (!forestBufferPromise) {
+        forestBufferPromise = loadAudioBuffer(context, "./forest_loop2.wav");
+      }
+      const buffer = await forestBufferPromise;
+      forestSource = context.createBufferSource();
+      forestSource.buffer = buffer;
+      forestSource.loop = true;
+      forestSource.connect(forestGain);
+      forestSource.start();
+      ramp(context, forestGain.gain, 0.45, 2.6);
+    } catch (error) {
+      console.warn("forest_loop2.wav failed, using generated forest fallback.", error);
+      forestSource = noiseSource(context, 2);
+      const forestFilter = context.createBiquadFilter();
+      forestFilter.type = "bandpass";
+      forestFilter.frequency.value = 620;
+      forestFilter.Q.value = 0.7;
+      forestSource.connect(forestFilter).connect(forestGain);
+      forestSource.start();
+    }
+  }
+}
+
+async function loadAudioBuffer(context, url) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Audio load failed: ${response.status} ${url}`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  return context.decodeAudioData(arrayBuffer);
 }
 
 function noiseSource(context, seconds) {
