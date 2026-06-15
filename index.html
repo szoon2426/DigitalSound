@@ -39,6 +39,10 @@
               <span>사운드 레이어</span>
               <strong id="layerCount">1</strong>
             </div>
+            <div class="metric">
+              <span>목표 진행</span>
+              <strong id="goalProgress">0%</strong>
+            </div>
           </div>
 
           <div class="mode-row" role="group" aria-label="운동 모드">
@@ -67,14 +71,15 @@
             <input id="depthSlider" type="range" min="0" max="100" value="65" />
           </label>
 
+          <label class="depth-control" for="targetRepsInput">
+            <span>목표 개수</span>
+            <input id="targetRepsInput" type="number" min="1" max="30" value="8" />
+          </label>
+
           <div class="sound-stack" aria-label="현재 활성 사운드 레이어">
             <div class="sound-row active" data-layer="forest">
               <span></span>
               숲 앰비언스
-            </div>
-            <div class="sound-row" data-layer="bass">
-              <span></span>
-              저현 드론
             </div>
             <div class="sound-row" data-layer="strings">
               <span></span>
@@ -83,6 +88,10 @@
             <div class="sound-row" data-layer="brass">
               <span></span>
               브라스 상승
+            </div>
+            <div class="sound-row" data-layer="bass">
+              <span></span>
+              저현 드론
             </div>
             <div class="sound-row" data-layer="choir">
               <span></span>

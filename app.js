@@ -7,18 +7,21 @@ const soundOnlyButton = document.querySelector("#soundOnlyButton");
 const addRepButton = document.querySelector("#addRepButton");
 const resetButton = document.querySelector("#resetButton");
 const depthSlider = document.querySelector("#depthSlider");
+const targetRepsInput = document.querySelector("#targetRepsInput");
 const modeButtons = document.querySelectorAll(".mode-button");
 const presenceStatus = document.querySelector("#presenceStatus");
 const phaseText = document.querySelector("#phaseText");
 const repCountEl = document.querySelector("#repCount");
 const depthScoreEl = document.querySelector("#depthScore");
 const layerCountEl = document.querySelector("#layerCount");
+const goalProgressEl = document.querySelector("#goalProgress");
 const soundRows = document.querySelectorAll(".sound-row");
 
 const state = {
   mode: "auto",
   reps: 0,
   depth: 0.65,
+  targetReps: 8,
   layerCount: 1,
   inStation: false,
   workoutReady: false,
@@ -48,6 +51,12 @@ soundOnlyButton.addEventListener("click", startSoundOnly);
 addRepButton.addEventListener("click", addTestRep);
 depthSlider.addEventListener("input", () => {
   state.depth = Number(depthSlider.value) / 100;
+  updateUI();
+});
+targetRepsInput.addEventListener("input", () => {
+  state.targetReps = clamp(Math.round(Number(targetRepsInput.value) || 1), 1, 30);
+  targetRepsInput.value = String(state.targetReps);
+  syncDopamineToGoal();
   updateUI();
 });
 resetButton.addEventListener("click", resetSession);
@@ -118,10 +127,9 @@ async function addTestRep() {
 
   state.depth = Number(depthSlider.value) / 100;
   state.reps += 1;
-  state.layerCount = Math.min(soundRows.length, 1 + state.reps);
   phaseText.textContent = "도파민 레이어";
   presenceStatus.textContent = "사운드만";
-  audio.addDopamineLayer(state.depth);
+  syncDopamineToGoal();
   updateUI();
 }
 
@@ -349,7 +357,7 @@ function processRepSignal(signalY) {
     state.direction = "top";
   }
 
-  state.layerCount = 1 + Number(state.depth > 0.18) + Number(state.depth > 0.48) + Number(state.depth > 0.76);
+  syncDopamineToGoal();
 }
 
 function handleFallbackMotion() {
@@ -458,7 +466,40 @@ function updateSound() {
 function triggerRepAccent(depth) {
   if (!audio || performance.now() - state.lastChimeAt < 600) return;
   state.lastChimeAt = performance.now();
-  audio.addDopamineLayer(depth);
+  state.depth = depth;
+  syncDopamineToGoal();
+}
+
+function syncDopamineToGoal() {
+  state.targetReps = clamp(Math.round(Number(targetRepsInput.value) || state.targetReps), 1, 30);
+  const progress = getDopamineProgress();
+  const intensity = getDopamineIntensity();
+  const desiredLayerCount = getDesiredLayerCount();
+  state.layerCount = 1 + desiredLayerCount;
+
+  if (audio) {
+    audio.setDopamineLayerCount(desiredLayerCount, state.depth, intensity);
+  }
+}
+
+function getDesiredLayerCount() {
+  if (state.reps === 0) return 0;
+  const dopamineLayerCount = soundRows.length - 1;
+  if (state.targetReps <= 1) return dopamineLayerCount;
+
+  const postFirstProgress = clamp((state.reps - 1) / (state.targetReps - 1), 0, 1);
+  const backLoadedProgress = Math.pow(postFirstProgress, 1.8);
+  return Math.min(dopamineLayerCount, 1 + Math.floor(backLoadedProgress * (dopamineLayerCount - 1)));
+}
+
+function getDopamineProgress() {
+  return clamp(state.reps / state.targetReps, 0, 1);
+}
+
+function getDopamineIntensity() {
+  if (state.reps === 0) return 0;
+  const progress = getDopamineProgress();
+  return clamp(0.22 + Math.pow(progress, 1.85) * 0.78, 0, 1);
 }
 
 function updateUI() {
@@ -470,6 +511,7 @@ function updateUI() {
   repCountEl.textContent = String(state.reps);
   depthScoreEl.textContent = `${Math.round(state.depth * 100)}%`;
   layerCountEl.textContent = String(state.layerCount);
+  goalProgressEl.textContent = `${Math.round(getDopamineProgress() * 100)}%`;
 
   const labels = {
     idle: "산 사운드",
@@ -488,6 +530,7 @@ function updateUI() {
 function resetSession() {
   state.reps = 0;
   state.depth = Number(depthSlider.value) / 100;
+  state.targetReps = clamp(Math.round(Number(targetRepsInput.value) || 8), 1, 30);
   state.layerCount = 1;
   state.baseline = null;
   state.peakDepth = 0;
@@ -593,22 +636,31 @@ function createMountainAudio() {
       ramp(context, waterGain.gain, 0, 1.2);
       ramp(context, pulseGain.gain, 0, 1.2);
     },
+    setDopamineLayerCount(count, depth, progress) {
+      const targetCount = clamp(count, 0, layerRecipes.length);
+      while (dopamineLayers.length < targetCount) {
+        this.addDopamineLayer(depth);
+      }
+
+      while (dopamineLayers.length > targetCount) {
+        const layer = dopamineLayers.pop();
+        ramp(context, layer.gain.gain, 0, 0.6);
+        layer.stop();
+      }
+
+      dopamineLayers.forEach((layer, index) => {
+        const recipe = layerRecipes[index];
+        const grandeur = 0.45 + depth * 0.85;
+        const progressLift = 0.65 + progress * 0.65;
+        ramp(context, layer.gain.gain, recipe.gain * grandeur * progressLift, 1.1);
+      });
+    },
     addDopamineLayer(depth) {
       const recipe = layerRecipes[dopamineLayers.length % layerRecipes.length];
       const grandeur = 0.45 + depth * 0.85;
       const layer = createMarchLayer(context, dopamineBus, recipe, depth);
       ramp(context, layer.gain.gain, recipe.gain * grandeur, 1.4);
       dopamineLayers.push(layer);
-      this.heroicHit(depth);
-    },
-    heroicHit(depth) {
-      const now = context.currentTime;
-      const grandeur = 0.75 + depth * 0.85;
-      playOrchestraStab(context, dopamineBus, now, [130.81, 164.81, 196, 261.63], 0.24 * grandeur);
-      playTimpaniHit(context, dopamineBus, now, 82 + depth * 18, 0.58 * grandeur);
-      playOrchestraStab(context, dopamineBus, now + 0.28, [164.81, 196, 261.63, 329.63], 0.32 * grandeur);
-      playTimpaniHit(context, dopamineBus, now + 0.28, 98 + depth * 24, 0.72 * grandeur);
-      playCymbalSwell(context, dopamineBus, now + 0.23, 0.16 * grandeur);
     },
     resetDopamine() {
       dopamineLayers.splice(0).forEach((layer) => {
