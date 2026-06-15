@@ -183,6 +183,7 @@ canvas {
 
 .mode-button,
 .primary-button,
+.secondary-button,
 .icon-button {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -207,11 +208,12 @@ canvas {
 
 .actions {
   display: grid;
-  grid-template-columns: 1fr 50px;
+  grid-template-columns: 1fr 1fr 50px;
   gap: 10px;
 }
 
 .primary-button,
+.secondary-button,
 .icon-button {
   min-height: 52px;
 }
@@ -222,12 +224,19 @@ canvas {
   font-weight: 800;
 }
 
+.secondary-button {
+  background: rgba(114, 199, 220, 0.12);
+  color: var(--text);
+  font-weight: 750;
+}
+
 .icon-button {
   font-size: 24px;
 }
 
 .mode-button:hover,
 .primary-button:hover,
+.secondary-button:hover,
 .icon-button:hover {
   transform: translateY(-1px);
 }
@@ -284,9 +293,21 @@ canvas {
   .control-panel {
     min-height: auto;
   }
+
+  .actions {
+    grid-template-columns: 1fr 1fr 50px;
+  }
 }
 
 @media (max-width: 520px) {
+  .actions {
+    grid-template-columns: 1fr 50px;
+  }
+
+  .secondary-button {
+    grid-column: 1 / -1;
+  }
+
   .meters {
     grid-template-columns: 1fr;
   }

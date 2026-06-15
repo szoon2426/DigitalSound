@@ -3,6 +3,7 @@ const overlay = document.querySelector("#overlay");
 const ctx = overlay.getContext("2d");
 
 const startButton = document.querySelector("#startButton");
+const soundOnlyButton = document.querySelector("#soundOnlyButton");
 const resetButton = document.querySelector("#resetButton");
 const modeButtons = document.querySelectorAll(".mode-button");
 const presenceStatus = document.querySelector("#presenceStatus");
@@ -41,6 +42,7 @@ const WASM_CDN =
   "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
 
 startButton.addEventListener("click", startExperience);
+soundOnlyButton.addEventListener("click", startSoundOnly);
 resetButton.addEventListener("click", resetSession);
 
 modeButtons.forEach((button) => {
@@ -58,11 +60,15 @@ async function startExperience() {
 
   try {
     await startCamera();
-    audio = createMountainAudio();
+    if (!audio) {
+      audio = createMountainAudio();
+    }
     await audio.start();
+    audio.keepMountainBed();
     await setupPose();
     resizeCanvas();
     startButton.textContent = "실행 중";
+    soundOnlyButton.disabled = true;
     phaseText.textContent = "기구 감지";
     animationFrame = requestAnimationFrame(loop);
   } catch (error) {
@@ -70,6 +76,27 @@ async function startExperience() {
     startButton.disabled = false;
     startButton.textContent = "다시 시작";
     phaseText.textContent = "권한 확인";
+    presenceStatus.textContent = "오류";
+  }
+}
+
+async function startSoundOnly() {
+  soundOnlyButton.disabled = true;
+  soundOnlyButton.textContent = "산 배경음 재생 중";
+  phaseText.textContent = "사운드 테스트";
+  presenceStatus.textContent = "사운드만";
+
+  try {
+    if (!audio) {
+      audio = createMountainAudio();
+    }
+    await audio.start();
+    audio.keepMountainBed();
+  } catch (error) {
+    console.error(error);
+    soundOnlyButton.disabled = false;
+    soundOnlyButton.textContent = "산 배경음만 테스트";
+    phaseText.textContent = "사운드 오류";
     presenceStatus.textContent = "오류";
   }
 }
@@ -401,15 +428,13 @@ function drawFallbackField() {
 
 function updateSound() {
   if (!audio) return;
-  audio.setPresence(state.inStation);
-  audio.setDepth(state.depth);
-  audio.setLayers(state.layerCount);
+  audio.keepMountainBed();
 }
 
 function triggerRepAccent(depth) {
   if (!audio || performance.now() - state.lastChimeAt < 600) return;
   state.lastChimeAt = performance.now();
-  audio.chime(depth);
+  void depth;
 }
 
 function updateUI() {
@@ -464,8 +489,8 @@ function createMountainAudio() {
   const waterGain = context.createGain();
   const pulseGain = context.createGain();
 
-  master.gain.value = 0.72;
-  forestGain.gain.value = 0.18;
+  master.gain.value = 0.58;
+  forestGain.gain.value = 0.24;
   windGain.gain.value = 0;
   waterGain.gain.value = 0;
   pulseGain.gain.value = 0;
@@ -516,20 +541,21 @@ function createMountainAudio() {
     async start() {
       if (context.state !== "running") await context.resume();
     },
+    keepMountainBed() {
+      ramp(context, master.gain, 0.58, 1.2);
+      ramp(context, forestGain.gain, 0.24, 1.2);
+      ramp(context, windGain.gain, 0, 1.2);
+      ramp(context, waterGain.gain, 0, 1.2);
+      ramp(context, pulseGain.gain, 0, 1.2);
+    },
     setPresence(active) {
-      ramp(context, forestGain.gain, active ? 0.22 : 0.15, 0.8);
-      ramp(context, master.gain, active ? 0.78 : 0.52, 0.8);
+      void active;
     },
     setDepth(depth) {
-      ramp(context, windGain.gain, depth * 0.23, 0.18);
-      ramp(context, waterGain.gain, Math.max(0, depth - 0.22) * 0.28, 0.18);
-      ramp(context, pulseGain.gain, Math.max(0, depth - 0.5) * 0.18, 0.12);
-      ramp(context, pulse.frequency, 90 + depth * 78, 0.12);
+      void depth;
     },
     setLayers(layerCount) {
-      const lift = (layerCount - 1) / 3;
-      ramp(context, windFilter.frequency, 360 + lift * 900, 0.3);
-      ramp(context, waterFilter.frequency, 1300 - lift * 520, 0.3);
+      void layerCount;
     },
     chime(depth) {
       [523.25, 659.25, 783.99 + depth * 130].forEach((frequency, index) => {

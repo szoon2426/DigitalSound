@@ -26,6 +26,13 @@ Python이 없다면 PowerShell에서 아래 명령을 사용합니다.
 - 반복이 완료되면 차임 사운드가 울립니다.
 - 포즈 모델을 불러오지 못하면 프레임 차이 기반의 움직임 감지 모드로 자동 전환됩니다.
 
+## 작업 브랜치
+
+- `motion-detection`: 치닝디핑/운동 인식 로직을 보관하는 브랜치입니다.
+- `sound-lab`: 카메라 없이 산 배경음과 도파민 레이어를 먼저 테스트하는 브랜치입니다.
+
+사운드를 먼저 확정한 뒤 `sound-lab`의 오디오 구조를 `motion-detection`에 합치는 흐름으로 작업합니다.
+
 ## 배포
 
 정적 파일만 있으므로 GitHub Pages, Netlify, Vercel, Cloudflare Pages에 그대로 배포할 수 있습니다.
