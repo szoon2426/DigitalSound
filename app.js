@@ -567,7 +567,7 @@ function createMountainAudio() {
   dopamineBus.gain.value = 3.1;
   hallBus.gain.value = 0.32;
   hall.buffer = createHallImpulse(context, 2.8);
-  forestGain.gain.value = 0.24;
+  forestGain.gain.value = 0;
   windGain.gain.value = 0;
   waterGain.gain.value = 0;
   pulseGain.gain.value = 0;
@@ -580,12 +580,8 @@ function createMountainAudio() {
   dopamineBus.connect(hall).connect(hallBus).connect(master);
   master.connect(context.destination);
 
-  const forest = noiseSource(context, 2);
-  const forestFilter = context.createBiquadFilter();
-  forestFilter.type = "bandpass";
-  forestFilter.frequency.value = 620;
-  forestFilter.Q.value = 0.7;
-  forest.connect(forestFilter).connect(forestGain);
+  let forestSource = null;
+  let forestBufferPromise = null;
 
   const wind = noiseSource(context, 2);
   const windFilter = context.createBiquadFilter();
@@ -610,7 +606,6 @@ function createMountainAudio() {
   lfoGain.gain.value = 170;
   lfo.connect(lfoGain).connect(windFilter.frequency);
 
-  forest.start();
   wind.start();
   water.start();
   pulse.start();
@@ -628,10 +623,11 @@ function createMountainAudio() {
   return {
     async start() {
       if (context.state !== "running") await context.resume();
+      await startForestLoop();
     },
     keepMountainBed() {
       ramp(context, master.gain, 0.58, 1.2);
-      ramp(context, forestGain.gain, 0.24, 1.2);
+      ramp(context, forestGain.gain, 0.45, 1.2);
       ramp(context, windGain.gain, 0, 1.2);
       ramp(context, waterGain.gain, 0, 1.2);
       ramp(context, pulseGain.gain, 0, 1.2);
@@ -692,6 +688,42 @@ function createMountainAudio() {
       });
     },
   };
+
+  async function startForestLoop() {
+    if (forestSource) return;
+
+    try {
+      if (!forestBufferPromise) {
+        forestBufferPromise = loadAudioBuffer(context, "./forest_loop2.wav");
+      }
+      const buffer = await forestBufferPromise;
+      forestSource = context.createBufferSource();
+      forestSource.buffer = buffer;
+      forestSource.loop = true;
+      forestSource.connect(forestGain);
+      forestSource.start();
+      ramp(context, forestGain.gain, 0.45, 2.6);
+    } catch (error) {
+      console.warn("forest_loop2.wav failed, using generated forest fallback.", error);
+      forestSource = noiseSource(context, 2);
+      const forestFilter = context.createBiquadFilter();
+      forestFilter.type = "bandpass";
+      forestFilter.frequency.value = 620;
+      forestFilter.Q.value = 0.7;
+      forestSource.connect(forestFilter).connect(forestGain);
+      forestSource.start();
+    }
+  }
+}
+
+async function loadAudioBuffer(context, url) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Audio load failed: ${response.status} ${url}`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  return context.decodeAudioData(arrayBuffer);
 }
 
 function noiseSource(context, seconds) {
