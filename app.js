@@ -2,13 +2,11 @@ const video = document.querySelector("#camera");
 const overlay = document.querySelector("#overlay");
 const ctx = overlay.getContext("2d");
 
+const introScreen = document.querySelector("#introScreen");
+const workoutScreen = document.querySelector("#workoutScreen");
 const startButton = document.querySelector("#startButton");
-const soundOnlyButton = document.querySelector("#soundOnlyButton");
-const addRepButton = document.querySelector("#addRepButton");
-const resetButton = document.querySelector("#resetButton");
-const depthSlider = document.querySelector("#depthSlider");
+const endButton = document.querySelector("#endButton");
 const targetRepsInput = document.querySelector("#targetRepsInput");
-const modeButtons = document.querySelectorAll(".mode-button");
 const presenceStatus = document.querySelector("#presenceStatus");
 const phaseText = document.querySelector("#phaseText");
 const repCountEl = document.querySelector("#repCount");
@@ -46,34 +44,22 @@ const POSE_CDN =
   "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 const WASM_CDN =
   "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
+const DEFAULT_DOPAMINE_DEPTH = 0.65;
 
 startButton.addEventListener("click", startExperience);
-soundOnlyButton.addEventListener("click", startSoundOnly);
-addRepButton.addEventListener("click", addTestRep);
-depthSlider.addEventListener("input", () => {
-  state.depth = Number(depthSlider.value) / 100;
-  updateUI();
-});
+endButton.addEventListener("click", stopExperience);
 targetRepsInput.addEventListener("input", () => {
   state.targetReps = clamp(Math.round(Number(targetRepsInput.value) || 1), 1, 30);
   targetRepsInput.value = String(state.targetReps);
   syncDopamineToGoal();
   updateUI();
 });
-resetButton.addEventListener("click", resetSession);
-
-modeButtons.forEach((button) => {
-  button.addEventListener("click", () => {
-    state.mode = button.dataset.mode;
-    state.baseline = null;
-    modeButtons.forEach((item) => item.classList.toggle("active", item === button));
-  });
-});
 
 async function startExperience() {
   startButton.disabled = true;
   startButton.textContent = "시작 중";
   phaseText.textContent = "권한 요청";
+  state.targetReps = clamp(Math.round(Number(targetRepsInput.value) || 8), 1, 30);
 
   try {
     await startCamera();
@@ -83,9 +69,11 @@ async function startExperience() {
     await audio.start();
     audio.keepMountainBed();
     await setupPose();
+    introScreen.hidden = true;
+    workoutScreen.hidden = false;
     resizeCanvas();
-    startButton.textContent = "실행 중";
-    soundOnlyButton.disabled = true;
+    startButton.textContent = "운동 시작";
+    startButton.disabled = false;
     phaseText.textContent = "기구 감지";
     animationFrame = requestAnimationFrame(loop);
   } catch (error) {
@@ -95,43 +83,6 @@ async function startExperience() {
     phaseText.textContent = "권한 확인";
     presenceStatus.textContent = "오류";
   }
-}
-
-async function startSoundOnly() {
-  soundOnlyButton.disabled = true;
-  soundOnlyButton.textContent = "산 배경음 재생 중";
-  phaseText.textContent = "사운드 테스트";
-  presenceStatus.textContent = "사운드만";
-
-  try {
-    if (!audio) {
-      audio = createMountainAudio();
-    }
-    await audio.start();
-    audio.keepMountainBed();
-    addRepButton.disabled = false;
-  } catch (error) {
-    console.error(error);
-    soundOnlyButton.disabled = false;
-    soundOnlyButton.textContent = "산 배경음만 테스트";
-    phaseText.textContent = "사운드 오류";
-    presenceStatus.textContent = "오류";
-  }
-}
-
-async function addTestRep() {
-  if (!audio) {
-    await startSoundOnly();
-  }
-
-  if (!audio) return;
-
-  state.depth = Number(depthSlider.value) / 100;
-  state.reps += 1;
-  phaseText.textContent = "도파민 레이어";
-  presenceStatus.textContent = "사운드만";
-  syncDopamineToGoal();
-  updateUI();
 }
 
 async function startCamera() {
@@ -146,6 +97,32 @@ async function startCamera() {
 
   video.srcObject = stream;
   await video.play();
+}
+
+function stopExperience() {
+  resetWorkoutProgress();
+  markResting();
+  state.phase = "idle";
+  if (audio) {
+    audio.fadeOutAll();
+  }
+  if (animationFrame) {
+    cancelAnimationFrame(animationFrame);
+    animationFrame = null;
+  }
+
+  const stream = video.srcObject;
+  if (stream) {
+    stream.getTracks().forEach((track) => track.stop());
+    video.srcObject = null;
+  }
+
+  workoutScreen.hidden = true;
+  introScreen.hidden = false;
+  startButton.disabled = false;
+  startButton.textContent = "운동 시작";
+  presenceStatus.textContent = "숲 대기";
+  updateUI();
 }
 
 async function setupPose() {
@@ -407,7 +384,7 @@ function markResting() {
   state.workoutReady = false;
   state.readyReason = "기구 밖";
   state.exercise = "idle";
-  state.depth = Number(depthSlider.value) / 100;
+  state.depth = DEFAULT_DOPAMINE_DEPTH;
   state.layerCount = 1;
   state.baseline = null;
   state.peakDepth = 0;
@@ -439,7 +416,7 @@ function finishInteraction() {
 
 function resetWorkoutProgress() {
   state.reps = 0;
-  state.depth = Number(depthSlider.value) / 100;
+  state.depth = DEFAULT_DOPAMINE_DEPTH;
   state.layerCount = 1;
   state.baseline = null;
   state.peakDepth = 0;
@@ -576,17 +553,6 @@ function updateUI() {
   });
 }
 
-function resetSession() {
-  state.targetReps = clamp(Math.round(Number(targetRepsInput.value) || 8), 1, 30);
-  resetWorkoutProgress();
-  state.phase = "idle";
-  if (audio) {
-    audio.fadeOutDopamine();
-    audio.keepMountainBed();
-  }
-  updateUI();
-}
-
 function resizeCanvas() {
   const rect = overlay.getBoundingClientRect();
   const width = Math.round(rect.width * window.devicePixelRatio);
@@ -714,6 +680,11 @@ function createMountainAudio() {
         ramp(context, layer.gain.gain, 0, 1.8);
         window.setTimeout(() => layer.stop(), 1900);
       });
+    },
+    fadeOutAll() {
+      this.fadeOutDopamine();
+      ramp(context, forestGain.gain, 0, 2.2);
+      ramp(context, master.gain, 0, 2.2);
     },
     setPresence(active) {
       void active;
@@ -1055,8 +1026,14 @@ function createHallImpulse(context, seconds) {
 }
 
 function ramp(context, param, value, seconds) {
-  param.cancelScheduledValues(context.currentTime);
-  param.linearRampToValueAtTime(value, context.currentTime + seconds);
+  const now = context.currentTime;
+  if (typeof param.cancelAndHoldAtTime === "function") {
+    param.cancelAndHoldAtTime(now);
+  } else {
+    param.cancelScheduledValues(now);
+    param.setValueAtTime(param.value, now);
+  }
+  param.linearRampToValueAtTime(value, now + seconds);
 }
 
 function distance(a, b) {
