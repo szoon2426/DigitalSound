@@ -189,31 +189,7 @@ function handlePose(landmarks) {
   }
 
   const points = pickLandmarks(landmarks);
-  const stationPoints = [
-    points.nose,
-    points.leftShoulder,
-    points.rightShoulder,
-    points.leftElbow,
-    points.rightElbow,
-    points.leftWrist,
-    points.rightWrist,
-    points.leftHip,
-    points.rightHip,
-  ];
-  const visibility = stationPoints.reduce((sum, point) => sum + point.visibility, 0) / stationPoints.length;
-  const centerX = (points.leftShoulder.x + points.rightShoulder.x + points.leftHip.x + points.rightHip.x) / 4;
-  const shoulderWidth = distance(points.leftShoulder, points.rightShoulder);
-  const torsoHeight =
-    (distance(points.leftShoulder, points.leftHip) + distance(points.rightShoulder, points.rightHip)) / 2;
-  const stationConfidence = visibility > 0.4 && shoulderWidth > 0.06 && torsoHeight > 0.1;
-
-  state.inStation = stationConfidence && centerX > 0.18 && centerX < 0.82;
-
-  if (!state.inStation) {
-    drawSkeleton(points, false);
-    finishInteraction();
-    return;
-  }
+  state.inStation = true;
 
   const readiness = getWorkoutReadiness(points);
   state.workoutReady = readiness.ready;
@@ -278,7 +254,11 @@ function getWorkoutReadiness(points) {
   const wristY = (points.leftWrist.y + points.rightWrist.y) / 2;
   const wristX = (points.leftWrist.x + points.rightWrist.x) / 2;
   const wristWidth = distance(points.leftWrist, points.rightWrist);
-  const wristsTrackable = points.leftWrist.visibility > 0.08 && points.rightWrist.visibility > 0.08;
+  const wristsTrackable =
+    Number.isFinite(points.leftWrist.x) &&
+    Number.isFinite(points.leftWrist.y) &&
+    Number.isFinite(points.rightWrist.x) &&
+    Number.isFinite(points.rightWrist.y);
 
   if (!wristsTrackable) {
     state.currentFeetOffGround = false;
