@@ -58,8 +58,8 @@ const WASM_CDN =
 const DEFAULT_DOPAMINE_DEPTH = 0.65;
 const DOPAMINE_LAYER_COUNT = 5;
 const READY_HOLD_MS = 700;
-const READY_WRIST_DRIFT_LIMIT = 0.24;
-const END_WRIST_DRIFT_LIMIT = 0.24;
+const READY_WRIST_BOX_LIMIT = 0.08;
+const END_WRIST_BOX_LIMIT = 0.14;
 
 startButton.addEventListener("click", startExperience);
 endButton.addEventListener("click", stopExperience);
@@ -251,9 +251,6 @@ function pickLandmarks(landmarks) {
 
 function getWorkoutReadiness(points) {
   const now = performance.now();
-  const wristY = (points.leftWrist.y + points.rightWrist.y) / 2;
-  const wristX = (points.leftWrist.x + points.rightWrist.x) / 2;
-  const wristWidth = distance(points.leftWrist, points.rightWrist);
   const wristsTrackable =
     Number.isFinite(points.leftWrist.x) &&
     Number.isFinite(points.leftWrist.y) &&
@@ -268,20 +265,18 @@ function getWorkoutReadiness(points) {
   }
 
   if (!state.wristAnchor) {
-    state.wristAnchor = { x: wristX, y: wristY, width: wristWidth };
+    state.wristAnchor = createWristAnchor(points);
     state.gripCandidateSince = now;
   }
 
-  const wristAnchorDrift = distance({ x: wristX, y: wristY }, state.wristAnchor);
-  const wristWidthShift = Math.abs(wristWidth - state.wristAnchor.width);
-  state.wristAnchorDrift = wristAnchorDrift + wristWidthShift * 0.6;
-  if (state.phase === "idle" && state.wristAnchorDrift > READY_WRIST_DRIFT_LIMIT) {
-    state.wristAnchor = { x: wristX, y: wristY, width: wristWidth };
+  state.wristAnchorDrift = getWristBoxDrift(points, state.wristAnchor);
+  if (state.phase === "idle" && state.wristAnchorDrift > READY_WRIST_BOX_LIMIT) {
+    state.wristAnchor = createWristAnchor(points);
     state.wristAnchorDrift = 0;
     state.gripCandidateSince = now;
   }
 
-  if (state.phase !== "idle" && state.wristAnchorDrift > END_WRIST_DRIFT_LIMIT) {
+  if (state.phase !== "idle" && state.wristAnchorDrift > END_WRIST_BOX_LIMIT) {
     state.readyHoldProgress = 0;
     state.currentFeetOffGround = false;
     return { ready: false, exercise: "idle", reason: "손 위치 이탈", ended: true, gripStable: false };
@@ -297,6 +292,22 @@ function getWorkoutReadiness(points) {
   }
 
   return { ready: true, exercise: "dip", reason: "준비 완료", gripStable };
+}
+
+function createWristAnchor(points) {
+  return {
+    left: { x: points.leftWrist.x, y: points.leftWrist.y },
+    right: { x: points.rightWrist.x, y: points.rightWrist.y },
+  };
+}
+
+function getWristBoxDrift(points, anchor) {
+  return Math.max(
+    Math.abs(points.leftWrist.x - anchor.left.x),
+    Math.abs(points.leftWrist.y - anchor.left.y),
+    Math.abs(points.rightWrist.x - anchor.right.x),
+    Math.abs(points.rightWrist.y - anchor.right.y)
+  );
 }
 
 function getMovementSignal(points, exercise) {
