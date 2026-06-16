@@ -60,6 +60,10 @@ const DOPAMINE_LAYER_COUNT = 5;
 const READY_HOLD_MS = 700;
 const READY_WRIST_BOX_LIMIT = 0.08;
 const END_WRIST_BOX_LIMIT = 0.14;
+const DIP_DEPTH_SCALE = 0.055;
+const DIP_START_DEPTH = 0.06;
+const DIP_BOTTOM_DEPTH = 0.16;
+const DIP_RETURN_DEPTH = 0.18;
 
 startButton.addEventListener("click", startExperience);
 endButton.addEventListener("click", stopExperience);
@@ -331,19 +335,19 @@ function processDipRepSignal(points) {
 
   state.bodyBaselineY = Math.min(state.bodyBaselineY, bodyY);
   state.bodyDrop = Math.max(0, bodyY - state.bodyBaselineY);
-  state.depth = clamp(state.bodyDrop / 0.06, 0, 1);
+  state.depth = clamp(state.bodyDrop / DIP_DEPTH_SCALE, 0, 1);
   state.peakDepth = Math.max(state.peakDepth, state.depth);
 
-  if (state.phase === "ready" && state.depth > 0.08) {
+  if (state.phase === "ready" && state.depth > DIP_START_DEPTH) {
     state.phase = "exercising";
   }
 
-  if (state.direction === "top" && state.depth > 0.22) {
+  if (state.direction === "top" && state.depth > DIP_BOTTOM_DEPTH) {
     state.direction = "bottom";
   }
 
-  if (state.direction === "bottom" && state.depth < 0.1) {
-    if (state.peakDepth > 0.22) {
+  if (state.direction === "bottom" && state.depth < DIP_RETURN_DEPTH) {
+    if (state.peakDepth > DIP_BOTTOM_DEPTH) {
       state.reps += 1;
       triggerRepAccent(state.peakDepth);
     }
