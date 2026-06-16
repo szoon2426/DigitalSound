@@ -277,39 +277,14 @@ function getWorkoutReadiness(points) {
   const now = performance.now();
   const wristY = (points.leftWrist.y + points.rightWrist.y) / 2;
   const wristX = (points.leftWrist.x + points.rightWrist.x) / 2;
-  const shoulderY = (points.leftShoulder.y + points.rightShoulder.y) / 2;
-  const shoulderX = (points.leftShoulder.x + points.rightShoulder.x) / 2;
-  const hipY = (points.leftHip.y + points.rightHip.y) / 2;
-  const hipX = (points.leftHip.x + points.rightHip.x) / 2;
-  const shoulderWidth = distance(points.leftShoulder, points.rightShoulder);
   const wristWidth = distance(points.leftWrist, points.rightWrist);
-  const wristsTrackable = points.leftWrist.visibility > 0.12 && points.rightWrist.visibility > 0.12;
-  const handsOverBarLike =
-    wristsTrackable &&
-    wristY < shoulderY - 0.13 &&
-    wristWidth > shoulderWidth * 0.75 &&
-    Math.abs(wristX - shoulderX) < shoulderWidth * 0.75;
-  const armsDownLike =
-    wristsTrackable &&
-    wristY > shoulderY + 0.02 &&
-    wristY < hipY + 0.48 &&
-    Math.abs(wristX - hipX) < shoulderWidth * 2.2 &&
-    wristWidth > shoulderWidth * 0.2 &&
-    wristWidth < shoulderWidth * 2.8;
+  const wristsTrackable = points.leftWrist.visibility > 0.08 && points.rightWrist.visibility > 0.08;
 
-  const rearDipGripLike =
-    wristsTrackable &&
-    wristY > shoulderY + 0.06 &&
-    wristY < hipY + 0.55 &&
-    Math.abs(wristX - hipX) < shoulderWidth * 2.35;
-
-  const likelyHoldingHandles = handsOverBarLike || armsDownLike || rearDipGripLike;
-
-  if (!handsOverBarLike && !armsDownLike && !likelyHoldingHandles) {
+  if (!wristsTrackable) {
     state.currentFeetOffGround = false;
     state.gripCandidateSince = 0;
     state.readyHoldProgress = 0;
-    return { ready: false, exercise: "idle", reason: "손잡이 대기", ended: false, gripStable: false };
+    return { ready: false, exercise: "idle", reason: "손목 대기", ended: false, gripStable: false };
   }
 
   if (!state.wristAnchor) {
@@ -341,19 +316,7 @@ function getWorkoutReadiness(points) {
     return { ready: false, exercise: "idle", reason: "자세 유지", ended: false, gripStable: false };
   }
 
-  if (state.mode === "pullup") {
-    return { ready: true, exercise: "pullup", reason: handsOverBarLike ? "턱걸이 준비" : "손잡이 고정", gripStable };
-  }
-
-  if (state.mode === "dip") {
-    return { ready: true, exercise: "dip", reason: armsDownLike ? "딥스 준비" : "손잡이 고정", gripStable };
-  }
-
-  if (handsOverBarLike) {
-    return { ready: true, exercise: "pullup", reason: "턱걸이 준비", gripStable };
-  }
-
-  return { ready: true, exercise: "dip", reason: "딥스 준비", gripStable };
+  return { ready: true, exercise: "dip", reason: "준비 완료", gripStable };
 }
 
 function getMovementSignal(points, exercise) {
@@ -366,7 +329,7 @@ function getMovementSignal(points, exercise) {
 function processDipRepSignal(points) {
   const shoulderY = (points.leftShoulder.y + points.rightShoulder.y) / 2;
   const hipY = (points.leftHip.y + points.rightHip.y) / 2;
-  const bodyY = shoulderY * 0.62 + hipY * 0.38;
+  const bodyY = shoulderY;
   state.bodyY = bodyY;
 
   if (state.bodyBaselineY === null) {
