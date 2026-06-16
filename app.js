@@ -38,6 +38,8 @@ const state = {
   lastReadyAt: 0,
   currentFeetOffGround: false,
   wristAnchorDrift: 0,
+  gripCandidateSince: 0,
+  readyHoldProgress: 0,
   poseReady: false,
   fallbackPrevious: null,
   fallbackMotion: 0,
@@ -55,6 +57,9 @@ const WASM_CDN =
   "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
 const DEFAULT_DOPAMINE_DEPTH = 0.65;
 const DOPAMINE_LAYER_COUNT = 5;
+const READY_HOLD_MS = 700;
+const READY_WRIST_DRIFT_LIMIT = 0.24;
+const END_WRIST_DRIFT_LIMIT = 0.36;
 
 startButton.addEventListener("click", startExperience);
 endButton.addEventListener("click", stopExperience);
@@ -269,6 +274,7 @@ function pickLandmarks(landmarks) {
 }
 
 function getWorkoutReadiness(points) {
+  const now = performance.now();
   const wristY = (points.leftWrist.y + points.rightWrist.y) / 2;
   const wristX = (points.leftWrist.x + points.rightWrist.x) / 2;
   const shoulderY = (points.leftShoulder.y + points.rightShoulder.y) / 2;
@@ -294,25 +300,38 @@ function getWorkoutReadiness(points) {
 
   if (!handsOverBarLike && !armsDownLike && !likelyHoldingHandles) {
     state.currentFeetOffGround = false;
+    state.gripCandidateSince = 0;
+    state.readyHoldProgress = 0;
     return { ready: false, exercise: "idle", reason: "손잡이 대기", ended: false, gripStable: false };
   }
 
   if (!state.wristAnchor) {
     state.wristAnchor = { x: wristX, y: wristY, width: wristWidth };
+    state.gripCandidateSince = now;
   }
 
   const wristAnchorDrift = distance({ x: wristX, y: wristY }, state.wristAnchor);
   const wristWidthShift = Math.abs(wristWidth - state.wristAnchor.width);
   state.wristAnchorDrift = wristAnchorDrift + wristWidthShift * 0.6;
-  if (state.phase === "idle" && state.wristAnchorDrift > 0.22) {
+  if (state.phase === "idle" && state.wristAnchorDrift > READY_WRIST_DRIFT_LIMIT) {
     state.wristAnchor = { x: wristX, y: wristY, width: wristWidth };
     state.wristAnchorDrift = 0;
+    state.gripCandidateSince = now;
   }
-  const gripStable = state.wristAnchorDrift < 0.22;
+
+  if (state.phase !== "idle" && state.wristAnchorDrift > END_WRIST_DRIFT_LIMIT) {
+    state.readyHoldProgress = 0;
+    state.currentFeetOffGround = false;
+    return { ready: false, exercise: "idle", reason: "손 위치 이탈", ended: true, gripStable: false };
+  }
+
+  const readyHoldMs = now - state.gripCandidateSince;
+  state.readyHoldProgress = state.phase === "idle" ? clamp(readyHoldMs / READY_HOLD_MS, 0, 1) : 1;
+  const gripStable = state.phase !== "idle" || state.readyHoldProgress >= 1;
   state.currentFeetOffGround = gripStable;
 
-  if (state.phase !== "idle" && !gripStable) {
-    return { ready: false, exercise: "idle", reason: "손 위치 이탈", ended: true, gripStable: false };
+  if (!gripStable) {
+    return { ready: false, exercise: "idle", reason: "자세 유지", ended: false, gripStable: false };
   }
 
   if (state.mode === "pullup") {
@@ -464,10 +483,12 @@ function markResting() {
   state.currentFeetOffGround = false;
   state.wristAnchor = null;
   state.wristAnchorDrift = 0;
+  state.gripCandidateSince = 0;
+  state.readyHoldProgress = 0;
 }
 
 function startInteractionSession() {
-  resetWorkoutProgress({ preserveWristAnchor: true });
+  resetWorkoutProgress({ preserveWristAnchor: true, preserveGripReadiness: true });
   state.phase = "ready";
   state.workoutReady = true;
   state.readyReason = "공중 대기";
@@ -489,7 +510,7 @@ function finishInteraction() {
   state.phase = "idle";
 }
 
-function resetWorkoutProgress({ preserveWristAnchor = false } = {}) {
+function resetWorkoutProgress({ preserveWristAnchor = false, preserveGripReadiness = false } = {}) {
   state.reps = 0;
   state.depth = DEFAULT_DOPAMINE_DEPTH;
   state.layerCount = 1;
@@ -500,11 +521,17 @@ function resetWorkoutProgress({ preserveWristAnchor = false } = {}) {
   state.bodyDrop = 0;
   state.peakDepth = 0;
   state.direction = "top";
-  state.currentFeetOffGround = false;
+  if (!preserveGripReadiness) {
+    state.currentFeetOffGround = false;
+    state.gripCandidateSince = 0;
+    state.readyHoldProgress = 0;
+  }
   if (!preserveWristAnchor) {
     state.wristAnchor = null;
   }
-  state.wristAnchorDrift = 0;
+  if (!preserveGripReadiness) {
+    state.wristAnchorDrift = 0;
+  }
 }
 
 function drawSkeleton(points, active) {
@@ -627,6 +654,7 @@ function updateUI() {
     `dir ${state.direction}`,
     `reps ${state.reps}/${state.targetReps}`,
     `grip ${state.currentFeetOffGround ? "fixed" : "free"}`,
+    `hold ${state.readyHoldProgress.toFixed(2)}`,
     `wrist ${state.wristAnchorDrift.toFixed(2)}`,
     `body ${state.bodyY.toFixed(2)}`,
     `drop ${state.bodyDrop.toFixed(2)}`,
