@@ -45,6 +45,7 @@ const POSE_CDN =
 const WASM_CDN =
   "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
 const DEFAULT_DOPAMINE_DEPTH = 0.65;
+const DOPAMINE_LAYER_COUNT = 5;
 
 startButton.addEventListener("click", startExperience);
 endButton.addEventListener("click", stopExperience);
@@ -192,9 +193,8 @@ function handlePose(landmarks) {
 
   state.inStation = stationConfidence && centerX > 0.18 && centerX < 0.82;
 
-  drawSkeleton(points, state.inStation);
-
   if (!state.inStation) {
+    drawSkeleton(points, false);
     finishInteraction();
     return;
   }
@@ -202,6 +202,7 @@ function handlePose(landmarks) {
   const readiness = getWorkoutReadiness(points);
   state.workoutReady = readiness.ready;
   state.readyReason = readiness.reason;
+  drawSkeleton(points, readiness.ready);
 
   if (!readiness.ready) {
     if (readiness.ended) {
@@ -223,8 +224,12 @@ function handlePose(landmarks) {
 
   state.exercise = readiness.exercise;
 
-  const movementY = getMovementSignal(points, state.exercise);
-  processRepSignal(movementY);
+  if (state.exercise === "dip") {
+    processDipRepSignal(points);
+  } else {
+    const movementY = getMovementSignal(points, state.exercise);
+    processRepSignal(movementY);
+  }
 }
 
 function pickLandmarks(landmarks) {
@@ -310,6 +315,40 @@ function getMovementSignal(points, exercise) {
   return points.nose.y;
 }
 
+function processDipRepSignal(points) {
+  const leftElbowAngle = angle(points.leftShoulder, points.leftElbow, points.leftWrist);
+  const rightElbowAngle = angle(points.rightShoulder, points.rightElbow, points.rightWrist);
+  const elbowAngle = (leftElbowAngle + rightElbowAngle) / 2;
+  const shoulderY = (points.leftShoulder.y + points.rightShoulder.y) / 2;
+  const wristY = (points.leftWrist.y + points.rightWrist.y) / 2;
+  const elbowBendDepth = clamp((158 - elbowAngle) / 58, 0, 1);
+  const shoulderDropDepth = clamp((wristY - shoulderY - 0.08) / 0.22, 0, 1);
+
+  state.depth = clamp(elbowBendDepth * 0.72 + shoulderDropDepth * 0.28, 0, 1);
+  state.peakDepth = Math.max(state.peakDepth, state.depth);
+
+  if (state.phase === "ready" && state.depth > 0.16) {
+    state.phase = "exercising";
+  }
+
+  if (state.direction === "top" && state.depth > 0.34) {
+    state.direction = "bottom";
+  }
+
+  if (state.direction === "bottom" && state.depth < 0.16) {
+    if (state.peakDepth > 0.34) {
+      state.reps += 1;
+      triggerRepAccent(state.peakDepth);
+    }
+    state.peakDepth = 0;
+    state.direction = "top";
+  }
+
+  if (state.phase === "exercising" && state.reps === 0) {
+    state.layerCount = 1;
+  }
+}
+
 function processRepSignal(signalY) {
   if (state.baseline === null) {
     state.baseline = signalY;
@@ -323,19 +362,19 @@ function processRepSignal(signalY) {
       ? Math.max(0, signalY - state.baseline)
       : Math.max(0, state.baseline - signalY);
 
-  state.depth = clamp(rawDepth / 0.18, 0, 1);
+  state.depth = clamp(rawDepth / 0.12, 0, 1);
   state.peakDepth = Math.max(state.peakDepth, state.depth);
 
-  if (state.phase === "ready" && state.depth > 0.25) {
+  if (state.phase === "ready" && state.depth > 0.18) {
     state.phase = "exercising";
   }
 
-  if (state.direction === "top" && state.depth > 0.58) {
+  if (state.direction === "top" && state.depth > 0.42) {
     state.direction = "bottom";
   }
 
-  if (state.direction === "bottom" && state.depth < 0.24) {
-    if (state.peakDepth > 0.58) {
+  if (state.direction === "bottom" && state.depth < 0.18) {
+    if (state.peakDepth > 0.42) {
       state.reps += 1;
       triggerRepAccent(state.peakDepth);
     }
@@ -504,12 +543,11 @@ function syncDopamineToGoal() {
 
 function getDesiredLayerCount() {
   if (state.reps === 0) return 0;
-  const dopamineLayerCount = soundRows.length - 1;
-  if (state.targetReps <= 1) return dopamineLayerCount;
+  if (state.targetReps <= 1) return DOPAMINE_LAYER_COUNT;
 
   const postFirstProgress = clamp((state.reps - 1) / (state.targetReps - 1), 0, 1);
   const backLoadedProgress = Math.pow(postFirstProgress, 1.8);
-  return Math.min(dopamineLayerCount, 1 + Math.floor(backLoadedProgress * (dopamineLayerCount - 1)));
+  return Math.min(DOPAMINE_LAYER_COUNT, 1 + Math.floor(backLoadedProgress * (DOPAMINE_LAYER_COUNT - 1)));
 }
 
 function getDopamineProgress() {
