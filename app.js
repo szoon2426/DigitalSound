@@ -59,7 +59,7 @@ const DEFAULT_DOPAMINE_DEPTH = 0.65;
 const DOPAMINE_LAYER_COUNT = 5;
 const READY_HOLD_MS = 700;
 const READY_WRIST_DRIFT_LIMIT = 0.24;
-const END_WRIST_DRIFT_LIMIT = 0.36;
+const END_WRIST_DRIFT_LIMIT = 0.24;
 
 startButton.addEventListener("click", startExperience);
 endButton.addEventListener("click", stopExperience);
@@ -198,7 +198,7 @@ function handlePose(landmarks) {
   drawSkeleton(points, readiness.ready || recentlyReady);
 
   if (!readiness.ready) {
-    if (readiness.ended && !recentlyReady) {
+    if (readiness.ended) {
       finishInteraction();
       return;
     }
@@ -320,19 +320,19 @@ function processDipRepSignal(points) {
 
   state.bodyBaselineY = Math.min(state.bodyBaselineY, bodyY);
   state.bodyDrop = Math.max(0, bodyY - state.bodyBaselineY);
-  state.depth = clamp(state.bodyDrop / 0.085, 0, 1);
+  state.depth = clamp(state.bodyDrop / 0.06, 0, 1);
   state.peakDepth = Math.max(state.peakDepth, state.depth);
 
-  if (state.phase === "ready" && state.depth > 0.14) {
+  if (state.phase === "ready" && state.depth > 0.08) {
     state.phase = "exercising";
   }
 
-  if (state.direction === "top" && state.depth > 0.3) {
+  if (state.direction === "top" && state.depth > 0.22) {
     state.direction = "bottom";
   }
 
-  if (state.direction === "bottom" && state.depth < 0.12) {
-    if (state.peakDepth > 0.3) {
+  if (state.direction === "bottom" && state.depth < 0.1) {
+    if (state.peakDepth > 0.22) {
       state.reps += 1;
       triggerRepAccent(state.peakDepth);
     }
