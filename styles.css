@@ -194,6 +194,21 @@ canvas {
   backdrop-filter: blur(12px);
 }
 
+.debug-hud {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  max-width: calc(100% - 180px);
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(6, 9, 8, 0.72);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+  backdrop-filter: blur(12px);
+}
+
 .end-button {
   position: absolute;
   right: 16px;

@@ -8,6 +8,7 @@ const startButton = document.querySelector("#startButton");
 const endButton = document.querySelector("#endButton");
 const targetRepsInput = document.querySelector("#targetRepsInput");
 const presenceStatus = document.querySelector("#presenceStatus");
+const debugHud = document.querySelector("#debugHud");
 const phaseText = document.querySelector("#phaseText");
 const repCountEl = document.querySelector("#repCount");
 const depthScoreEl = document.querySelector("#depthScore");
@@ -28,7 +29,10 @@ const state = {
   exercise: "idle",
   direction: "top",
   baseline: null,
+  dipBaseline: null,
   peakDepth: 0,
+  lastReadyAt: 0,
+  feetOffGround: false,
   poseReady: false,
   fallbackPrevious: null,
   fallbackMotion: 0,
@@ -50,9 +54,10 @@ const DOPAMINE_LAYER_COUNT = 5;
 startButton.addEventListener("click", startExperience);
 endButton.addEventListener("click", stopExperience);
 targetRepsInput.addEventListener("input", () => {
-  state.targetReps = clamp(Math.round(Number(targetRepsInput.value) || 1), 1, 30);
-  targetRepsInput.value = String(state.targetReps);
-  syncDopamineToGoal();
+  const nextTarget = parseTargetReps(targetRepsInput.value, null);
+  if (nextTarget !== null) {
+    state.targetReps = nextTarget;
+  }
   updateUI();
 });
 
@@ -60,7 +65,8 @@ async function startExperience() {
   startButton.disabled = true;
   startButton.textContent = "시작 중";
   phaseText.textContent = "권한 요청";
-  state.targetReps = clamp(Math.round(Number(targetRepsInput.value) || 8), 1, 30);
+  state.targetReps = parseTargetReps(targetRepsInput.value, 1);
+  targetRepsInput.value = String(state.targetReps);
 
   try {
     await startCamera();
@@ -205,18 +211,25 @@ function handlePose(landmarks) {
   drawSkeleton(points, readiness.ready);
 
   if (!readiness.ready) {
-    if (readiness.ended) {
+    const recentlyReady = performance.now() - state.lastReadyAt < 850;
+    if (readiness.ended && !recentlyReady) {
       finishInteraction();
       return;
     }
     state.exercise = "ready";
     state.depth = Math.max(0, state.depth - 0.045);
     state.layerCount = 1;
-    state.baseline = null;
-    state.peakDepth = 0;
-    state.direction = "top";
+    if (!recentlyReady) {
+      state.baseline = null;
+      state.dipBaseline = null;
+      state.peakDepth = 0;
+      state.direction = "top";
+    }
     return;
   }
+
+  state.lastReadyAt = performance.now();
+  state.feetOffGround = true;
 
   if (state.phase === "idle") {
     startInteractionSession();
@@ -321,27 +334,41 @@ function processDipRepSignal(points) {
   const elbowAngle = (leftElbowAngle + rightElbowAngle) / 2;
   const shoulderY = (points.leftShoulder.y + points.rightShoulder.y) / 2;
   const wristY = (points.leftWrist.y + points.rightWrist.y) / 2;
-  const elbowBendDepth = clamp((158 - elbowAngle) / 58, 0, 1);
-  const shoulderDropDepth = clamp((wristY - shoulderY - 0.08) / 0.22, 0, 1);
+  const hipY = (points.leftHip.y + points.rightHip.y) / 2;
+  const elbowBendDepth = clamp((158 - elbowAngle) / 62, 0, 1);
 
-  state.depth = clamp(elbowBendDepth * 0.72 + shoulderDropDepth * 0.28, 0, 1);
+  if (!state.dipBaseline) {
+    state.dipBaseline = { shoulderY, hipY, wristY };
+    return;
+  }
+
+  const shoulderDropDepth = clamp((shoulderY - state.dipBaseline.shoulderY) / 0.095, 0, 1);
+  const hipDropDepth = clamp((hipY - state.dipBaseline.hipY) / 0.095, 0, 1);
+  const wristRelativeDepth = clamp((wristY - shoulderY - 0.02) / 0.18, 0, 1);
+
+  state.depth = clamp(
+    shoulderDropDepth * 0.48 + hipDropDepth * 0.34 + elbowBendDepth * 0.12 + wristRelativeDepth * 0.06,
+    0,
+    1,
+  );
   state.peakDepth = Math.max(state.peakDepth, state.depth);
 
-  if (state.phase === "ready" && state.depth > 0.16) {
+  if (state.phase === "ready" && state.depth > 0.14) {
     state.phase = "exercising";
   }
 
-  if (state.direction === "top" && state.depth > 0.34) {
+  if (state.direction === "top" && state.depth > 0.3) {
     state.direction = "bottom";
   }
 
-  if (state.direction === "bottom" && state.depth < 0.16) {
-    if (state.peakDepth > 0.34) {
+  if (state.direction === "bottom" && state.depth < 0.12) {
+    if (state.peakDepth > 0.3) {
       state.reps += 1;
       triggerRepAccent(state.peakDepth);
     }
     state.peakDepth = 0;
     state.direction = "top";
+    state.dipBaseline = { shoulderY, hipY, wristY };
   }
 
   if (state.phase === "exercising" && state.reps === 0) {
@@ -426,8 +453,10 @@ function markResting() {
   state.depth = DEFAULT_DOPAMINE_DEPTH;
   state.layerCount = 1;
   state.baseline = null;
+  state.dipBaseline = null;
   state.peakDepth = 0;
   state.direction = "top";
+  state.feetOffGround = false;
 }
 
 function startInteractionSession() {
@@ -458,8 +487,10 @@ function resetWorkoutProgress() {
   state.depth = DEFAULT_DOPAMINE_DEPTH;
   state.layerCount = 1;
   state.baseline = null;
+  state.dipBaseline = null;
   state.peakDepth = 0;
   state.direction = "top";
+  state.feetOffGround = false;
 }
 
 function drawSkeleton(points, active) {
@@ -530,7 +561,6 @@ function triggerRepAccent(depth) {
 }
 
 function syncDopamineToGoal() {
-  state.targetReps = clamp(Math.round(Number(targetRepsInput.value) || state.targetReps), 1, 30);
   const progress = getDopamineProgress();
   const intensity = getDopamineIntensity();
   const desiredLayerCount = getDesiredLayerCount();
@@ -560,6 +590,12 @@ function getDopamineIntensity() {
   return clamp(0.22 + Math.pow(progress, 1.85) * 0.78, 0, 1);
 }
 
+function parseTargetReps(value, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return clamp(Math.round(parsed), 1, 30);
+}
+
 function updateUI() {
   presenceStatus.textContent =
     state.phase === "exercising"
@@ -571,6 +607,13 @@ function updateUI() {
   depthScoreEl.textContent = `${Math.round(state.depth * 100)}%`;
   layerCountEl.textContent = String(state.layerCount);
   goalProgressEl.textContent = `${Math.round(getDopamineProgress() * 100)}%`;
+  debugHud.textContent = [
+    `phase ${state.phase}`,
+    `depth ${state.depth.toFixed(2)}`,
+    `dir ${state.direction}`,
+    `reps ${state.reps}/${state.targetReps}`,
+    `feet ${state.feetOffGround ? "off" : "on"}`,
+  ].join(" | ");
 
   const labels = {
     idle: "산 사운드",
