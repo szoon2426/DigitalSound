@@ -31,6 +31,9 @@ const state = {
   baseline: null,
   dipBaseline: null,
   wristAnchor: null,
+  bodyBaselineY: null,
+  bodyY: 0,
+  bodyDrop: 0,
   peakDepth: 0,
   lastReadyAt: 0,
   currentFeetOffGround: false,
@@ -275,24 +278,17 @@ function getWorkoutReadiness(points) {
   const shoulderWidth = distance(points.leftShoulder, points.rightShoulder);
   const wristWidth = distance(points.leftWrist, points.rightWrist);
   const wristsVisible = points.leftWrist.visibility > 0.5 && points.rightWrist.visibility > 0.5;
-  const elbowsVisible = points.leftElbow.visibility > 0.45 && points.rightElbow.visibility > 0.45;
-  const elbowAngle =
-    (angle(points.leftShoulder, points.leftElbow, points.leftWrist) +
-      angle(points.rightShoulder, points.rightElbow, points.rightWrist)) /
-    2;
   const handsOverBarLike =
     wristY < shoulderY - 0.13 &&
     wristWidth > shoulderWidth * 0.75 &&
     Math.abs(wristX - shoulderX) < shoulderWidth * 0.75;
   const armsDownLike =
     wristsVisible &&
-    elbowsVisible &&
-    wristY > shoulderY + 0.08 &&
+    wristY > shoulderY + 0.07 &&
     wristY < hipY + 0.22 &&
     Math.abs(wristX - hipX) < shoulderWidth * 1.25 &&
     wristWidth > shoulderWidth * 0.5 &&
     wristWidth < shoulderWidth * 1.85;
-  const dipSupportLike = armsDownLike && elbowAngle < 168;
 
   if (!handsOverBarLike && !armsDownLike) {
     state.currentFeetOffGround = false;
@@ -322,7 +318,7 @@ function getWorkoutReadiness(points) {
   }
 
   if (state.mode === "dip") {
-    return { ready: true, exercise: "dip", reason: dipSupportLike ? "딥스 준비" : "손잡이 고정", gripStable };
+    return { ready: true, exercise: "dip", reason: armsDownLike ? "딥스 준비" : "손잡이 고정", gripStable };
   }
 
   if (handsOverBarLike) {
@@ -340,28 +336,20 @@ function getMovementSignal(points, exercise) {
 }
 
 function processDipRepSignal(points) {
-  const leftElbowAngle = angle(points.leftShoulder, points.leftElbow, points.leftWrist);
-  const rightElbowAngle = angle(points.rightShoulder, points.rightElbow, points.rightWrist);
-  const elbowAngle = (leftElbowAngle + rightElbowAngle) / 2;
   const shoulderY = (points.leftShoulder.y + points.rightShoulder.y) / 2;
-  const wristY = (points.leftWrist.y + points.rightWrist.y) / 2;
   const hipY = (points.leftHip.y + points.rightHip.y) / 2;
-  const elbowBendDepth = clamp((158 - elbowAngle) / 62, 0, 1);
+  const bodyY = shoulderY * 0.62 + hipY * 0.38;
+  state.bodyY = bodyY;
 
-  if (!state.dipBaseline) {
-    state.dipBaseline = { shoulderY, hipY, wristY };
+  if (state.bodyBaselineY === null) {
+    state.bodyBaselineY = bodyY;
+    state.dipBaseline = { shoulderY, hipY };
     return;
   }
 
-  const shoulderDropDepth = clamp((shoulderY - state.dipBaseline.shoulderY) / 0.095, 0, 1);
-  const hipDropDepth = clamp((hipY - state.dipBaseline.hipY) / 0.095, 0, 1);
-  const shoulderToWristDepth = clamp((wristY - shoulderY - (state.dipBaseline.wristY - state.dipBaseline.shoulderY)) / 0.12, 0, 1);
-
-  state.depth = clamp(
-    shoulderDropDepth * 0.46 + hipDropDepth * 0.32 + shoulderToWristDepth * 0.16 + elbowBendDepth * 0.06,
-    0,
-    1,
-  );
+  state.bodyBaselineY = Math.min(state.bodyBaselineY, bodyY);
+  state.bodyDrop = Math.max(0, bodyY - state.bodyBaselineY);
+  state.depth = clamp(state.bodyDrop / 0.085, 0, 1);
   state.peakDepth = Math.max(state.peakDepth, state.depth);
 
   if (state.phase === "ready" && state.depth > 0.14) {
@@ -379,7 +367,8 @@ function processDipRepSignal(points) {
     }
     state.peakDepth = 0;
     state.direction = "top";
-    state.dipBaseline = { shoulderY, hipY, wristY };
+    state.bodyBaselineY = bodyY;
+    state.dipBaseline = { shoulderY, hipY };
   }
 
   if (state.phase === "exercising" && state.reps === 0) {
@@ -465,6 +454,9 @@ function markResting() {
   state.layerCount = 1;
   state.baseline = null;
   state.dipBaseline = null;
+  state.bodyBaselineY = null;
+  state.bodyY = 0;
+  state.bodyDrop = 0;
   state.peakDepth = 0;
   state.direction = "top";
   state.currentFeetOffGround = false;
@@ -501,6 +493,9 @@ function resetWorkoutProgress({ preserveWristAnchor = false } = {}) {
   state.layerCount = 1;
   state.baseline = null;
   state.dipBaseline = null;
+  state.bodyBaselineY = null;
+  state.bodyY = 0;
+  state.bodyDrop = 0;
   state.peakDepth = 0;
   state.direction = "top";
   state.currentFeetOffGround = false;
@@ -631,6 +626,8 @@ function updateUI() {
     `reps ${state.reps}/${state.targetReps}`,
     `grip ${state.currentFeetOffGround ? "fixed" : "free"}`,
     `wrist ${state.wristAnchorDrift.toFixed(2)}`,
+    `body ${state.bodyY.toFixed(2)}`,
+    `drop ${state.bodyDrop.toFixed(2)}`,
   ].join(" | ");
 
   const labels = {
