@@ -200,7 +200,7 @@ function handlePose(landmarks) {
   const shoulderWidth = distance(points.leftShoulder, points.rightShoulder);
   const torsoHeight =
     (distance(points.leftShoulder, points.leftHip) + distance(points.rightShoulder, points.rightHip)) / 2;
-  const stationConfidence = visibility > 0.48 && shoulderWidth > 0.08 && torsoHeight > 0.14;
+  const stationConfidence = visibility > 0.4 && shoulderWidth > 0.06 && torsoHeight > 0.1;
 
   state.inStation = stationConfidence && centerX > 0.18 && centerX < 0.82;
 
@@ -213,10 +213,10 @@ function handlePose(landmarks) {
   const readiness = getWorkoutReadiness(points);
   state.workoutReady = readiness.ready;
   state.readyReason = readiness.reason;
-  drawSkeleton(points, readiness.ready);
+  const recentlyReady = performance.now() - state.lastReadyAt < 850;
+  drawSkeleton(points, readiness.ready || recentlyReady);
 
   if (!readiness.ready) {
-    const recentlyReady = performance.now() - state.lastReadyAt < 850;
     if (readiness.ended && !recentlyReady) {
       finishInteraction();
       return;
@@ -277,20 +277,22 @@ function getWorkoutReadiness(points) {
   const hipX = (points.leftHip.x + points.rightHip.x) / 2;
   const shoulderWidth = distance(points.leftShoulder, points.rightShoulder);
   const wristWidth = distance(points.leftWrist, points.rightWrist);
-  const wristsVisible = points.leftWrist.visibility > 0.5 && points.rightWrist.visibility > 0.5;
+  const wristsVisible = points.leftWrist.visibility > 0.25 && points.rightWrist.visibility > 0.25;
   const handsOverBarLike =
     wristY < shoulderY - 0.13 &&
     wristWidth > shoulderWidth * 0.75 &&
     Math.abs(wristX - shoulderX) < shoulderWidth * 0.75;
   const armsDownLike =
     wristsVisible &&
-    wristY > shoulderY + 0.07 &&
-    wristY < hipY + 0.22 &&
-    Math.abs(wristX - hipX) < shoulderWidth * 1.25 &&
-    wristWidth > shoulderWidth * 0.5 &&
-    wristWidth < shoulderWidth * 1.85;
+    wristY > shoulderY + 0.02 &&
+    wristY < hipY + 0.32 &&
+    Math.abs(wristX - hipX) < shoulderWidth * 1.75 &&
+    wristWidth > shoulderWidth * 0.3 &&
+    wristWidth < shoulderWidth * 2.3;
 
-  if (!handsOverBarLike && !armsDownLike) {
+  const likelyHoldingHandles = wristsVisible && wristY > shoulderY && wristY < hipY + 0.38;
+
+  if (!handsOverBarLike && !armsDownLike && !likelyHoldingHandles) {
     state.currentFeetOffGround = false;
     return { ready: false, exercise: "idle", reason: "손잡이 대기", ended: false, gripStable: false };
   }
@@ -302,11 +304,11 @@ function getWorkoutReadiness(points) {
   const wristAnchorDrift = distance({ x: wristX, y: wristY }, state.wristAnchor);
   const wristWidthShift = Math.abs(wristWidth - state.wristAnchor.width);
   state.wristAnchorDrift = wristAnchorDrift + wristWidthShift * 0.6;
-  if (state.phase === "idle" && state.wristAnchorDrift > 0.13) {
+  if (state.phase === "idle" && state.wristAnchorDrift > 0.22) {
     state.wristAnchor = { x: wristX, y: wristY, width: wristWidth };
     state.wristAnchorDrift = 0;
   }
-  const gripStable = state.wristAnchorDrift < 0.13;
+  const gripStable = state.wristAnchorDrift < 0.22;
   state.currentFeetOffGround = gripStable;
 
   if (state.phase !== "idle" && !gripStable) {
