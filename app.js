@@ -283,20 +283,27 @@ function getWorkoutReadiness(points) {
   const hipX = (points.leftHip.x + points.rightHip.x) / 2;
   const shoulderWidth = distance(points.leftShoulder, points.rightShoulder);
   const wristWidth = distance(points.leftWrist, points.rightWrist);
-  const wristsVisible = points.leftWrist.visibility > 0.25 && points.rightWrist.visibility > 0.25;
+  const wristsTrackable = points.leftWrist.visibility > 0.12 && points.rightWrist.visibility > 0.12;
   const handsOverBarLike =
+    wristsTrackable &&
     wristY < shoulderY - 0.13 &&
     wristWidth > shoulderWidth * 0.75 &&
     Math.abs(wristX - shoulderX) < shoulderWidth * 0.75;
   const armsDownLike =
-    wristsVisible &&
+    wristsTrackable &&
     wristY > shoulderY + 0.02 &&
-    wristY < hipY + 0.32 &&
-    Math.abs(wristX - hipX) < shoulderWidth * 1.75 &&
-    wristWidth > shoulderWidth * 0.3 &&
-    wristWidth < shoulderWidth * 2.3;
+    wristY < hipY + 0.48 &&
+    Math.abs(wristX - hipX) < shoulderWidth * 2.2 &&
+    wristWidth > shoulderWidth * 0.2 &&
+    wristWidth < shoulderWidth * 2.8;
 
-  const likelyHoldingHandles = wristsVisible && wristY > shoulderY && wristY < hipY + 0.38;
+  const rearDipGripLike =
+    wristsTrackable &&
+    wristY > shoulderY + 0.06 &&
+    wristY < hipY + 0.55 &&
+    Math.abs(wristX - hipX) < shoulderWidth * 2.35;
+
+  const likelyHoldingHandles = handsOverBarLike || armsDownLike || rearDipGripLike;
 
   if (!handsOverBarLike && !armsDownLike && !likelyHoldingHandles) {
     state.currentFeetOffGround = false;
